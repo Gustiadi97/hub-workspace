@@ -906,7 +906,7 @@ export default function Home() {
           <div className="profile-row">
             <div className="avatar">{initials(profileName)}</div>
             <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
-            <button type="button" className="logout-button sidebar-logout" onClick={signOut}><span aria-hidden="true">↪</span> Keluar</button>
+            
           </div>
         </div>
       </aside>
@@ -917,14 +917,14 @@ export default function Home() {
           <div className="topbar-right">
             <span className="sync-label"><i /> Cloud tersinkron</span>
             <span className="top-role">{isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "WORKSPACE USER"}</span>
-            <div className="avatar top-avatar" aria-label={profileName}>{initials(profileName)}</div><button type="button" className="logout-button topbar-logout" onClick={signOut}><span aria-hidden="true">↪</span> Keluar</button>
+            <div className="avatar top-avatar" aria-label={profileName} title={profileName}>{initials(profileName)}</div><button type="button" className="logout-button topbar-logout" onClick={signOut} title="Keluar dari akun HUB WORKSPACE"><span aria-hidden="true">↪</span> Keluar</button>
           </div>
         </header>
         <div className="page-content">
           <div className="mobile-page-heading">
             <div className="mobile-brand-mark">H</div>
             <div><b>HUB WORKSPACE</b><span>{activeWorkspace?.name ?? "Workspace"}</span></div>
-            <button type="button" className="logout-button mobile-logout-button" onClick={signOut}><span aria-hidden="true">↪</span> Keluar</button>
+            <button type="button" className="logout-button mobile-logout-button" onClick={signOut} title="Keluar dari akun HUB WORKSPACE"><span aria-hidden="true">↪</span> Keluar</button>
           </div>
 
 
