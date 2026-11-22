@@ -27,6 +27,19 @@ type Task = {
   created_at: string;
   created_by: string;
 };
+type TaskUpdate = {
+  id: string;
+  task_id: string;
+  workspace_id: string;
+  created_by: string;
+  message: string;
+  status_from: Task["status"];
+  status_to: Task["status"];
+  progress_from: number;
+  progress_to: number;
+  created_at: string;
+  author_name: string;
+};
 type Note = { id: string; title: string; content: string; is_pinned: boolean; updated_at: string };
 type EventItem = { id: string; title: string; description: string; location: string; starts_at: string; ends_at: string | null; all_day: boolean };
 type Member = { id: string; user_id: string; role: string; display_name: string };
@@ -94,6 +107,14 @@ export default function Home() {
   const [taskFilter, setTaskFilter] = useState("all");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [activeUpdateTask, setActiveUpdateTask] = useState<Task | null>(null);
+  const [taskUpdateRows, setTaskUpdateRows] = useState<TaskUpdate[]>([]);
+  const [taskUpdateDraft, setTaskUpdateDraft] = useState("");
+  const [taskUpdateStatus, setTaskUpdateStatus] = useState<Task["status"]>("todo");
+  const [taskUpdateProgress, setTaskUpdateProgress] = useState(0);
+  const [taskUpdateRefresh, setTaskUpdateRefresh] = useState(0);
+  const [loadingTaskUpdates, setLoadingTaskUpdates] = useState(false);
+  const [postingTaskUpdate, setPostingTaskUpdate] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
@@ -291,6 +312,53 @@ export default function Home() {
     return () => { mounted = false; };
   }, [supabase, user, workspaceId, isAppAdmin, isPlatformAdmin, refreshKey, flash]);
 
+  useEffect(() => {
+    if (!supabase || !activeUpdateTask) return;
+    let mounted = true;
+    const loadTaskUpdates = async () => {
+      setLoadingTaskUpdates(true);
+      const { data, error } = await supabase.from("hw_task_updates")
+        .select("id,task_id,workspace_id,created_by,message,status_from,status_to,progress_from,progress_to,created_at")
+        .eq("task_id", activeUpdateTask.id)
+        .order("created_at", { ascending: true });
+      if (!mounted) return;
+      if (error) {
+        flash(messageFrom(error));
+        setTaskUpdateRows([]);
+        setLoadingTaskUpdates(false);
+        return;
+      }
+      const rows = data ?? [];
+      const authorIds = [...new Set(rows.map((row: { created_by: string }) => row.created_by))];
+      const { data: profiles } = authorIds.length
+        ? await supabase.from("hw_user_profiles").select("user_id,display_name").in("user_id", authorIds)
+        : { data: [] as { user_id: string; display_name: string }[] };
+      if (!mounted) return;
+      const names = new Map((profiles ?? []).map((profile: { user_id: string; display_name: string }) => [profile.user_id, profile.display_name]));
+      setTaskUpdateRows(rows.map((row: Omit<TaskUpdate, "author_name">) => ({
+        ...row,
+        author_name: names.get(row.created_by) || (row.created_by === user?.id ? profileName : "Anggota HUB"),
+      })));
+      setLoadingTaskUpdates(false);
+    };
+    void loadTaskUpdates();
+    const channel = supabase.channel(`task-updates-${activeUpdateTask.id}`)
+      .on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "hw_task_updates",
+        filter: `task_id=eq.${activeUpdateTask.id}`,
+      }, () => {
+        setTaskUpdateRefresh((value) => value + 1);
+        setRefreshKey((value) => value + 1);
+      })
+      .subscribe();
+    return () => {
+      mounted = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, activeUpdateTask?.id, taskUpdateRefresh, flash, user?.id, profileName]);
+
   const doAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase) return;
@@ -328,6 +396,14 @@ export default function Home() {
     setShowTaskModal(true);
   };
 
+  const openTaskUpdates = (task: Task) => {
+    setActiveUpdateTask(task);
+    setTaskUpdateDraft("");
+    setTaskUpdateStatus(task.status);
+    setTaskUpdateProgress(task.progress ?? 0);
+    setTaskUpdateRows([]);
+  };
+
   const createTask = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase || !user || !activeWorkspace) return;
@@ -355,20 +431,72 @@ export default function Home() {
 
   const changeTask = async (taskId: string, patch: Partial<Task>) => {
     if (!supabase) return;
-    const previous = tasks;
-    setTasks((current) => current.map((task) => task.id === taskId ? { ...task, ...patch } : task));
-    const { error } = await supabase.from("hw_tasks").update(patch).eq("id", taskId);
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) return;
+    const nextStatus = patch.status ?? task.status;
+    const nextProgress = patch.progress ?? task.progress;
+    if (nextStatus === task.status && nextProgress === task.progress) return;
+    const message = nextStatus !== task.status
+      ? `Status tugas diubah menjadi ${statusMeta[nextStatus].label} melalui papan tugas.`
+      : `Progress diperbarui menjadi ${nextProgress}%.`;
+    const { error } = await supabase.rpc("hw_post_task_update", {
+      p_task_id: taskId,
+      p_message: message,
+      p_status: nextStatus,
+      p_progress: nextProgress,
+    });
     if (error) {
-      setTasks(previous);
       flash(messageFrom(error));
-    } else setRefreshKey((value) => value + 1);
+    } else {
+      setTasks((current) => current.map((item) => item.id === taskId ? { ...item, status: nextStatus, progress: nextProgress } : item));
+      setRefreshKey((value) => value + 1);
+      if (activeUpdateTask?.id === taskId) {
+        setActiveUpdateTask({ ...task, status: nextStatus, progress: nextProgress });
+        setTaskUpdateStatus(nextStatus);
+        setTaskUpdateProgress(nextProgress);
+        setTaskUpdateRefresh((value) => value + 1);
+      }
+    }
   };
 
   const deleteTask = async (taskId: string) => {
-    if (!supabase || !window.confirm("Delete this task?")) return;
+    if (!supabase || !window.confirm("Hapus tugas ini beserta seluruh riwayat update-nya?")) return;
     const { error } = await supabase.from("hw_tasks").delete().eq("id", taskId);
     if (error) flash(messageFrom(error));
-    else { setTasks((current) => current.filter((task) => task.id !== taskId)); flash("Task deleted."); }
+    else {
+      setTasks((current) => current.filter((task) => task.id !== taskId));
+      if (activeUpdateTask?.id === taskId) setActiveUpdateTask(null);
+      flash("Tugas dan riwayat update dihapus.");
+    }
+  };
+
+  const postTaskUpdate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase || !activeUpdateTask) return;
+    const message = taskUpdateDraft.trim();
+    if (!message) { flash("Tulis informasi terbaru sebelum mengirim update."); return; }
+    setPostingTaskUpdate(true);
+    try {
+      const progress = taskUpdateStatus === "done" ? 100 : Math.max(0, Math.min(100, Number(taskUpdateProgress) || 0));
+      const { error } = await supabase.rpc("hw_post_task_update", {
+        p_task_id: activeUpdateTask.id,
+        p_message: message,
+        p_status: taskUpdateStatus,
+        p_progress: progress,
+      });
+      if (error) throw error;
+      setActiveUpdateTask((current) => current ? { ...current, status: taskUpdateStatus, progress } : current);
+      setTasks((current) => current.map((task) => task.id === activeUpdateTask.id ? { ...task, status: taskUpdateStatus, progress } : task));
+      setTaskUpdateDraft("");
+      setTaskUpdateProgress(progress);
+      setRefreshKey((value) => value + 1);
+      setTaskUpdateRefresh((value) => value + 1);
+      flash("Update tugas berhasil dikirim.");
+    } catch (error) {
+      flash(messageFrom(error));
+    } finally {
+      setPostingTaskUpdate(false);
+    }
   };
 
   const createNote = async (event: FormEvent<HTMLFormElement>) => {
@@ -794,7 +922,7 @@ export default function Home() {
                     <td><span className={`priority-text ${task.priority}`}>{priorityMeta[task.priority].label}</span></td>
                     <td><select className={`status-select status-${task.status}`} value={task.status} onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">Belum</option><option value="in_progress">Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Batal</option></select></td>
                     <td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td>
-                    <td><button className="edit-task-button" onClick={() => openTaskEditor(task)}>Edit</button><button className="icon-button danger-hover" title="Hapus tugas" onClick={() => deleteTask(task.id)}>×</button></td>
+                    <td><div className="task-action-stack"><button className="edit-task-button update-task-button" onClick={() => openTaskUpdates(task)}>💬 Update</button><button className="edit-task-button" onClick={() => openTaskEditor(task)}>Edit</button><button className="icon-button danger-hover" title="Hapus tugas" onClick={() => deleteTask(task.id)}>×</button></div></td>
                   </tr>)}
                 </tbody></table></div>}
             </section>
@@ -809,7 +937,7 @@ export default function Home() {
                 return <section className={`kanban-column kanban-${status}`} key={status} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (draggedTask) { void changeTask(draggedTask, { status, progress: status === "done" ? 100 : (tasks.find((task) => task.id === draggedTask)?.progress ?? 0) }); setDraggedTask(null); } }}>
                   <div className="kanban-head"><span className={`status-dot ${statusMeta[status].tone}`} /><b>{status === "todo" ? "Belum Dikerjakan" : status === "in_progress" ? "Sedang Berjalan" : status === "waiting" ? "Menunggu" : "Selesai"}</b><small>{columnTasks.length}</small></div>
                   {columnTasks.map((task) => <article className="kanban-card" key={task.id} draggable onDragStart={() => setDraggedTask(task.id)} onDragEnd={() => setDraggedTask(null)}>
-                    <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Hapus task" onClick={() => deleteTask(task.id)}>×</button></div></div>
+                    <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Lihat update" onClick={() => openTaskUpdates(task)}>☷</button><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Hapus task" onClick={() => deleteTask(task.id)}>×</button></div></div>
                     <span className="category-tag">{task.category || "Tanpa kategori"}</span><h4>{task.title}</h4><p>{task.description || "Tidak ada keterangan tambahan."}</p>
                     <div className="kanban-progress"><span><i style={{ width: `${task.progress}%` }} /></span><small>{task.progress}%</small></div>
                     <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><span className="kanban-assignee">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? "Belum ada PIC"}</span></div>
@@ -933,6 +1061,48 @@ export default function Home() {
           </div>
           <div className="task-entry-actions"><button className="primary-button" disabled={busy}>{busy ? "Menyimpan…" : editingTaskId ? "Simpan Perubahan" : "Simpan Task"}</button><button type="button" className="secondary-button" onClick={() => setTaskForm(defaultTaskForm())}>Kosongkan Form</button></div>
         </form>
+      </Modal>}
+
+      {activeUpdateTask && <Modal className="task-updates-modal" title="Update Tugas" subtitle={activeUpdateTask.title} onClose={() => setActiveUpdateTask(null)}>
+        <div className="task-update-summary">
+          <span className={`pill ${statusMeta[activeUpdateTask.status].tone}`}>{statusMeta[activeUpdateTask.status].label}</span>
+          <span className={`pill ${priorityMeta[activeUpdateTask.priority].tone}`}>{priorityMeta[activeUpdateTask.priority].label}</span>
+          <span className="task-update-summary-progress">Progress <b>{activeUpdateTask.progress}%</b></span>
+          <span className="task-update-summary-pic">PIC: {members.find((member) => member.user_id === activeUpdateTask.assigned_to)?.display_name ?? "Belum ditentukan"}</span>
+        </div>
+        <div className="task-chat-thread">
+          {loadingTaskUpdates && <div className="task-chat-empty">Memuat percakapan…</div>}
+          {!loadingTaskUpdates && taskUpdateRows.length === 0 && <div className="task-chat-empty"><span>💬</span><b>Belum ada update.</b><small>Tulis perkembangan pertama untuk memulai percakapan tugas ini.</small></div>}
+          {taskUpdateRows.map((item) => {
+            const mine = item.created_by === user?.id;
+            const changedStatus = item.status_from !== item.status_to;
+            const changedProgress = item.progress_from !== item.progress_to;
+            return <article className={mine ? "task-chat-message mine" : "task-chat-message"} key={item.id}>
+              {!mine && <div className="task-chat-avatar">{initials(item.author_name)}</div>}
+              <div className="task-chat-message-content">
+                <div className="task-chat-meta"><b>{mine ? "Kamu" : item.author_name}</b><time>{timeLabel(item.created_at)}</time></div>
+                <div className="task-chat-bubble">
+                  <p>{item.message}</p>
+                  {(changedStatus || changedProgress || item.status_from === item.status_to) && <div className="task-chat-change">
+                    {changedStatus ? <span>Status: <b>{statusMeta[item.status_from].label}</b> → <b>{statusMeta[item.status_to].label}</b></span> : <span>Status: <b>{statusMeta[item.status_to].label}</b></span>}
+                    {changedProgress && <span>Progress: <b>{item.progress_from}%</b> → <b>{item.progress_to}%</b></span>}
+                  </div>}
+                </div>
+              </div>
+              {mine && <div className="task-chat-avatar mine-avatar">{initials(profileName)}</div>}
+            </article>;
+          })}
+        </div>
+        {workspaceRole === "viewer" ? <div className="task-chat-readonly">Akun kamu memiliki akses baca saja. Kamu tetap bisa melihat seluruh riwayat update.</div> :
+          <form className="task-chat-compose" onSubmit={postTaskUpdate}>
+            <label className="task-chat-message-label">Informasi terbaru<textarea value={taskUpdateDraft} onChange={(e) => setTaskUpdateDraft(e.target.value)} placeholder="Tulis perkembangan terbaru, kendala, hasil pekerjaan, atau tindak lanjut berikutnya…" rows={3} maxLength={5000} required /></label>
+            <div className="task-chat-compose-controls">
+              <label>Status<select value={taskUpdateStatus} onChange={(e) => { const status = e.target.value as Task["status"]; setTaskUpdateStatus(status); if (status === "done") setTaskUpdateProgress(100); }}><option value="todo">Belum Mulai</option><option value="in_progress">Sedang Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
+              <label>Progress (%)<input type="number" min="0" max="100" step="5" value={taskUpdateStatus === "done" ? 100 : taskUpdateProgress} onChange={(e) => setTaskUpdateProgress(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} /></label>
+              <small>{taskUpdateDraft.length}/5000</small>
+              <button className="primary-button" disabled={postingTaskUpdate || !taskUpdateDraft.trim()}>{postingTaskUpdate ? "Mengirim…" : "Kirim Update ↗"}</button>
+            </div>
+          </form>}
       </Modal>}
 
       {showNoteModal &&<Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
