@@ -90,6 +90,27 @@ Deno.serve(async (req) => {
         return json({ error: "Hanya Super Admin yang dapat membuat akun Admin." }, 403);
       }
 
+      const workspaceId = String(body.workspaceId || "").trim();
+      const workspaceRole = String(body.workspaceRole || "member");
+      if (!workspaceId) return json({ error: "Pilih workspace untuk akun baru." }, 400);
+      if (!["admin", "member", "viewer"].includes(workspaceRole)) {
+        return json({ error: "Role akses workspace tidak valid." }, 400);
+      }
+
+      const { data: targetWorkspace, error: workspaceError } = await adminClient
+        .from("hw_workspaces").select("id,owner_id").eq("id", workspaceId).maybeSingle();
+      if (workspaceError || !targetWorkspace) {
+        return json({ error: "Workspace yang dipilih tidak ditemukan atau tidak dapat diakses." }, 404);
+      }
+
+      if (!isSuperAdmin && targetWorkspace.owner_id !== callerId) {
+        const { data: callerMembership } = await adminClient.from("hw_workspace_members")
+          .select("role").eq("workspace_id", workspaceId).eq("user_id", callerId).maybeSingle();
+        if (!callerMembership || !["owner", "admin"].includes(callerMembership.role)) {
+          return json({ error: "Kamu hanya dapat memberikan akses pada workspace yang kamu kelola." }, 403);
+        }
+      }
+
       const email = `${loginId}@${LOGIN_DOMAIN}`;
       const { data: created, error: createError } = await adminClient.auth.admin.createUser({
         email,
@@ -129,7 +150,19 @@ Deno.serve(async (req) => {
         return json({ error: profileError.message }, 400);
       }
 
-      return json({ ok: true, userId, loginId: loginId.toUpperCase(), role });
+      const { error: membershipError } = await adminClient.from("hw_workspace_members").insert({
+        workspace_id: workspaceId,
+        user_id: userId,
+        role: workspaceRole,
+      });
+      if (membershipError) {
+        await adminClient.from("hw_user_profiles").delete().eq("user_id", userId);
+        await adminClient.from("hw_user_accounts").delete().eq("user_id", userId);
+        await adminClient.auth.admin.deleteUser(userId);
+        return json({ error: membershipError.message }, 400);
+      }
+
+      return json({ ok: true, userId, loginId: loginId.toUpperCase(), role, workspaceId, workspaceRole });
     }
 
     const targetUserId = String(body.userId || "");
