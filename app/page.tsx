@@ -27,7 +27,8 @@ type Task = {
 type Note = { id: string; title: string; content: string; is_pinned: boolean; updated_at: string };
 type EventItem = { id: string; title: string; description: string; location: string; starts_at: string; ends_at: string | null; all_day: boolean };
 type Member = { id: string; user_id: string; role: string; display_name: string };
-type Invite = { id: string; workspace_id: string; email: string; role: string; accepted_at: string | null; created_at: string; invited_by: string };
+type Invite = { id: string; workspace_id: string; email: string | null; login_id: string | null; role: string; accepted_at: string | null; created_at: string; invited_by: string };
+type UserAccount = { user_id: string; login_id: string; display_name: string; account_role: "admin" | "user"; is_active: boolean; created_at: string; is_super_admin?: boolean };
 
 const statusMeta = {
   todo: { label: "To do", tone: "slate" },
@@ -49,6 +50,7 @@ const navItems = [
   { id: "calendar", label: "Calendar", icon: "▦" },
   { id: "notes", label: "Notes", icon: "▤" },
   { id: "team", label: "Team & access", icon: "♧" },
+  { id: "users", label: "User management", icon: "♙" },
 ] as const;
 type ViewId = (typeof navItems)[number]["id"];
 
@@ -93,16 +95,19 @@ export default function Home() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [toast, setToast] = useState("");
   const [draggedTask, setDraggedTask] = useState<string | null>(null);
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
-  const [authName, setAuthName] = useState("");
-  const [authEmail, setAuthEmail] = useState("");
+  const [loginInput, setLoginInput] = useState("");
+  const [loginId, setLoginId] = useState("");
+  const [isAppAdmin, setIsAppAdmin] = useState(false);
+  const [accounts, setAccounts] = useState<UserAccount[]>([]);
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user" });
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", due_date: "", assigned_to: "", status: "todo", progress: 0 });
   const [noteForm, setNoteForm] = useState({ title: "", content: "" });
   const [eventForm, setEventForm] = useState({ title: "", description: "", location: "", starts_at: "", ends_at: "" });
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", workspace_type: "team" as "personal" | "team" });
-  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteLoginId, setInviteLoginId] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
 
   const activeWorkspace = workspaces.find((item) => item.id === workspaceId) ?? null;
@@ -118,9 +123,14 @@ export default function Home() {
   }, []);
 
   const loadBase = useCallback(async (client: SupabaseClient, account: User) => {
-    const { data: profile } = await client.from("hw_user_profiles").select("display_name").eq("user_id", account.id).maybeSingle();
-    const displayName = profile?.display_name || account.user_metadata?.full_name || account.email?.split("@")[0] || "Workspace user";
-    setProfileName(displayName);
+    const { data: accountInfo, error: accountError } = await client.from("hw_user_accounts").select("login_id,display_name,account_role,is_active").eq("user_id", account.id).maybeSingle();
+    if (accountError || !accountInfo || accountInfo.is_active !== true) {
+      await client.auth.signOut();
+      throw new Error("Akun tidak aktif atau belum didaftarkan oleh Admin HUB WORKSPACE.");
+    }
+    setLoginId(accountInfo.login_id);
+    setProfileName(accountInfo.display_name || account.user_metadata?.full_name || accountInfo.login_id);
+    setIsAppAdmin(accountInfo.account_role === "admin");
     const { data: spaceData, error: spaceError } = await client.from("hw_workspaces").select("id,name,workspace_type,owner_id,description").order("created_at", { ascending: true });
     if (spaceError) throw spaceError;
     let available = (spaceData ?? []) as Workspace[];
@@ -229,24 +239,12 @@ export default function Home() {
     setBusy(true);
     setAuthMessage("");
     try {
-      if (authMode === "signup") {
-        if (authPassword.length < 8) throw new Error("Use a password with at least 8 characters.");
-        const { data, error } = await supabase.auth.signUp({
-          email: authEmail.trim(),
-          password: authPassword,
-          options: {
-            data: { full_name: authName.trim() },
-            emailRedirectTo: window.location.origin,
-          },
-        });
-        if (error) throw error;
-        if (!data.session) setAuthMessage("Account created. Please check your email to confirm your address, then sign in.");
-        else setAuthMessage("Account created. Your workspace is being prepared.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
-        if (error) throw error;
-        setAuthMessage("Welcome back.");
-      }
+      const normalizedId = loginInput.trim().toLowerCase().replace(/\\s+/g, "");
+      if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(normalizedId)) throw new Error("Format ID Login tidak valid.");
+      const internalEmail = `${normalizedId}@accounts.hub-workspace.invalid`;
+      const { error } = await supabase.auth.signInWithPassword({ email: internalEmail, password: authPassword });
+      if (error) throw error;
+      setAuthMessage("Login berhasil. Menyiapkan workspace…");
     } catch (error) {
       setAuthMessage(messageFrom(error));
     } finally {
@@ -392,15 +390,18 @@ export default function Home() {
     if (!supabase || !user || !activeWorkspace) return;
     setBusy(true);
     try {
-      const email = inviteEmail.trim().toLowerCase();
-      if (!email.includes("@")) throw new Error("Enter a valid email address.");
+      const targetId = inviteLoginId.trim().toLowerCase().replace(/\\s+/g, "");
+      if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(targetId)) throw new Error("Format ID pengguna tidak valid.");
+      const { data: targetAccount, error: lookupError } = await supabase.from("hw_user_accounts").select("login_id,is_active").eq("login_id", targetId).maybeSingle();
+      if (lookupError) throw lookupError;
+      if (!targetAccount || !targetAccount.is_active) throw new Error("ID pengguna tidak ditemukan atau tidak aktif.");
       const { error } = await supabase.from("hw_workspace_invites").insert({
-        workspace_id: activeWorkspace.id, email, role: inviteRole, invited_by: user.id,
+        workspace_id: activeWorkspace.id, email: null, login_id: targetAccount.login_id, role: inviteRole, invited_by: user.id,
       });
       if (error) throw error;
-      setInviteEmail("");
+      setInviteLoginId("");
       setRefreshKey((value) => value + 1);
-      flash("Invitation created. The user can accept it after signing in.");
+      flash("Undangan dibuat. Pengguna dapat menerimanya setelah login.");
     } catch (error) { flash(messageFrom(error)); }
     finally { setBusy(false); }
   };
@@ -460,23 +461,21 @@ export default function Home() {
       <div className="auth-right">
         <form className="auth-form" onSubmit={doAuth}>
           <div className="mobile-brand brand-lockup"><div className="brand-mark">H</div><div><b>HUB WORKSPACE</b><span>Work, clearly.</span></div></div>
-          <div className="eyebrow">WELCOME {authMode === "signin" ? "BACK" : "ABOARD"}</div>
-          <h2>{authMode === "signin" ? "Sign in to your space." : "Create your account."}</h2>
-          <p className="muted">{authMode === "signin" ? "Pick up where you left off." : "Start with your own workspace. Invite your team when you're ready."}</p>
-          {authMode === "signup" && <label>Full name<input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder="Your name" autoComplete="name" required /></label>}
-          <label>Email address<input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@company.com" autoComplete="email" required /></label>
-          <label>Password<input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="At least 8 characters" autoComplete={authMode === "signin" ? "current-password" : "new-password"} minLength={8} required /></label>
+          <div className="eyebrow">ACCOUNT ACCESS</div>
+          <h2>Sign in to your space.</h2>
+          <p className="muted">Masuk menggunakan ID pengguna dan password yang diberikan Admin.</p>
+          <label>ID Pengguna<input value={loginInput} onChange={(e) => setLoginInput(e.target.value)} placeholder="Contoh: imam01" autoComplete="username" autoCapitalize="none" spellCheck={false} required /></label>
+          <label>Password<input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="Masukkan password" autoComplete="current-password" minLength={8} required /></label>
           {authMessage && <div className="inline-message">{authMessage}</div>}
-          <button className="primary-button full-button" disabled={busy}>{busy ? "Please wait…" : authMode === "signin" ? "Sign in" : "Create account"} <span>↗</span></button>
-          <div className="auth-switch">{authMode === "signin" ? "New to HUB WORKSPACE?" : "Already have an account?"} <button type="button" onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthMessage(""); }}>{authMode === "signin" ? "Create account" : "Sign in"}</button></div>
-          <div className="auth-secure">◈ &nbsp; Secure sign-in powered by Supabase Auth</div>
+          <button className="primary-button full-button" disabled={busy}>{busy ? "Memeriksa akun…" : "Masuk ke workspace"} <span>↗</span></button>
+          <div className="auth-secure">◈ &nbsp; Akun dibuat dan dikelola oleh Admin HUB WORKSPACE</div>
         </form>
       </div>
     </div>
   );
 
   const title = navItems.find((item) => item.id === activeView)?.label ?? "Overview";
-  const pendingInvites = invites.filter((invite) => !invite.accepted_at && invite.email.toLowerCase() === (user.email ?? "").toLowerCase());
+  const pendingInvites = invites.filter((invite) => !invite.accepted_at && (invite.login_id?.toLowerCase() === loginId.toLowerCase() || invite.email?.toLowerCase() === (user.email ?? "").toLowerCase()));
   const upcomingEvents = events.filter((event) => new Date(event.starts_at).getTime() >= Date.now()).slice(0, 4);
 
   return (
@@ -493,7 +492,7 @@ export default function Home() {
         <button className="new-workspace" onClick={() => setShowWorkspaceModal(true)}>＋ <span>New workspace</span></button>
         <div className="nav-label">WORKSPACE</div>
         <nav className="side-nav">
-          {navItems.map((item) => (
+          {navItems.filter((item) => item.id !== "users" || isAppAdmin || isPlatformAdmin).map((item) => (
             <button key={item.id} className={activeView === item.id ? "nav-item active" : "nav-item"} onClick={() => setActiveView(item.id)}>
               <span className="nav-icon">{item.icon}</span>{item.label}
               {item.id === "tasks" && tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").length > 0 && <small>{tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").length}</small>}
@@ -504,7 +503,7 @@ export default function Home() {
           <div className="plan-card"><div className="plan-icon">✳</div><b>Make work flow.</b><p>Your space for focused work and shared progress.</p><span>{isPlatformAdmin ? "SUPER ADMIN" : "PERSONAL + TEAM"}</span></div>
           <div className="profile-row">
             <div className="avatar">{initials(profileName)}</div>
-            <div className="profile-copy"><b>{profileName}</b><span>{user.email}</span></div>
+            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()}</span></div>
             <button className="icon-button" onClick={signOut} title="Sign out">↗</button>
           </div>
         </div>
@@ -633,7 +632,7 @@ export default function Home() {
         <footer className="app-footer"><span>HUB WORKSPACE</span><span>Personal focus. Shared momentum.</span><span>v1.0</span></footer>
       </main>
 
-      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.label.replace("My ", "")}</small></button>)}</nav>
+      <nav className="mobile-nav">{navItems.filter((item) => item.id !== "users" || isAppAdmin || isPlatformAdmin).map((item) => <button key={item.id} className={activeView === item.id ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.label.replace("My ", "")}</small></button>)}</nav>
 
       {showTaskModal && <Modal title={editingTaskId ? "Edit task" : "Create a task"} subtitle="Keep the owner, timing, and next action clear." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Person in charge<select value={taskForm.assigned_to} onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</option>)}</select></label><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label></div><div className="form-two"><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label><label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></label></div><label>Progress <span className="form-hint">{taskForm.progress}% complete</span><input type="range" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Number(e.target.value) })} /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowTaskModal(false); setEditingTaskId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingTaskId ? "Save changes ↗" : "Create task ↗"}</button></div></form></Modal>}
 
