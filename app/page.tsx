@@ -1069,7 +1069,7 @@ export default function Home() {
         <div className="sidebar-bottom">
           <div className="profile-row">
             <div className="avatar">{initials(profileName)}</div>
-            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
+            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {myHubCode || "HUB belum diatur"} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
             
           </div>
         </div>
@@ -1079,6 +1079,28 @@ export default function Home() {
         <header className="topbar">
           <div className="breadcrumb"><span>HUB WORKSPACE</span><b>/</b><strong>{title}</strong></div>
           <div className="topbar-right">
+            <div className="notification-area">
+              <button type="button" className={notificationsOpen ? "notification-bell open" : "notification-bell"} onClick={() => setNotificationsOpen((value) => !value)} aria-label={`Notifikasi, ${unreadNotificationCount} belum dibaca`} aria-expanded={notificationsOpen}>
+                <span>♧</span>{unreadNotificationCount > 0 && <i>{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</i>}
+              </button>
+              {notificationsOpen && <section className="notification-popover">
+                <header><div><b>Notifikasi</b><small>{unreadNotificationCount} belum dibaca</small></div><button type="button" onClick={async () => {
+                  if (!supabase || !user || unreadNotificationCount === 0) return;
+                  const readAt = new Date().toISOString();
+                  const { error } = await supabase.from("hw_notifications").update({ read_at: readAt }).eq("user_id", user.id).is("read_at", null);
+                  if (error) flash(messageFrom(error), "error");
+                  else { setNotifications((current) => current.map((item) => ({ ...item, read_at: item.read_at || readAt }))); flash("Semua notifikasi sudah dibaca."); }
+                }}>Tandai dibaca</button></header>
+                <div className="notification-list">
+                  {notifications.length === 0 ? <div className="notification-empty"><span>♧</span><b>Belum ada notifikasi</b><small>Tugas untuk HUB kamu akan muncul di sini.</small></div> :
+                    notifications.slice(0, 30).map((item) => <button type="button" key={item.id} className={item.read_at ? "notification-item read" : "notification-item unread"} onClick={() => void openNotification(item)}>
+                      <i className={`notification-kind ${item.kind}`}>{item.kind === "task_update" ? "↻" : "☷"}</i>
+                      <span><b>{item.title}</b><small>{item.body}</small><time>{timeLabel(item.created_at)}</time></span>
+                      {!item.read_at && <em />}
+                    </button>)}
+                </div>
+              </section>}
+            </div>
             <span className="sync-label"><i /> Cloud tersinkron</span>
             <span className="top-role">{isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "WORKSPACE USER"}</span>
             <div className="avatar top-avatar" aria-label={profileName} title={profileName}>{initials(profileName)}</div><button type="button" className="logout-button topbar-logout" onClick={signOut} title="Keluar dari akun HUB WORKSPACE"><span aria-hidden="true">↪</span> Keluar</button>
@@ -1134,11 +1156,12 @@ export default function Home() {
             </div>
             <section className="panel-card dashboard-priorities">
               <div className="section-head"><div><div className="eyebrow">PRIORITAS 7 HARI KE DEPAN</div><h3>Daftar tugas prioritas</h3><p>Urut berdasarkan deadline terdekat, lalu tingkat prioritas.</p></div><div className="priority-week-actions"><span className="subtle-count">{weekTasks.length} tugas aktif</span><button className="text-button" onClick={() => setActiveView("tasks")}>Buka daftar tugas ↗</button></div></div>
-              {weekTasks.length ? <div className="task-table-wrap priority-week-table-wrap"><table className="task-table priority-week-table"><thead><tr><th>Deadline</th><th>Rencana / Kegiatan</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
+              {weekTasks.length ? <div className="task-table-wrap priority-week-table-wrap"><table className="task-table priority-week-table"><thead><tr><th>Deadline</th><th>Rencana / Kegiatan</th><th>PIC</th><th>HUB</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
                 {weekTasks.map((task) => <tr key={task.id}>
                   <td className="date-cell priority-date-cell">{dateLabel(task.due_date)}</td>
                   <td><div className="table-task-title"><b>{task.title}</b><span>{task.category || "Tanpa kategori"}{(task.division_ids ?? []).length ? ` · ${(task.division_ids ?? []).map((id) => divisions.find((division) => division.id === id)?.name).filter(Boolean).join(", ")}` : ""}</span></div></td>
                   <td><span className="pic-name">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? (task.assigned_to === user?.id ? profileName : "Belum ditentukan")}</span></td>
+                  <td><div className="task-hub-tags">{(task.hub_codes ?? []).map((code) => <span key={code}>{code}</span>)}{!(task.hub_codes ?? []).length && <small>Umum</small>}</div></td>
                   <td><span className={`priority-text ${task.priority}`}>{priorityMeta[task.priority].label}</span></td>
                   <td><span className={`pill ${statusMeta[task.status].tone}`}>{statusMeta[task.status].label}</span></td>
                   <td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td>
@@ -1182,7 +1205,7 @@ export default function Home() {
                   <div className="kanban-head"><span className={`status-dot ${statusMeta[status].tone}`} /><b>{status === "todo" ? "Belum Dikerjakan" : status === "in_progress" ? "Sedang Berjalan" : status === "waiting" ? "Menunggu" : "Selesai"}</b><small>{columnTasks.length}</small></div>
                   {columnTasks.map((task) => <article className="kanban-card" key={task.id} draggable onDragStart={() => setDraggedTask(task.id)} onDragEnd={() => setDraggedTask(null)}>
                     <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Lihat update" onClick={() => openTaskUpdates(task)}>☷</button><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Hapus task" onClick={() => deleteTask(task.id)}>×</button></div></div>
-                    <span className="category-tag">{task.category || "Tanpa kategori"}</span><h4>{task.title}</h4><p>{task.description || "Tidak ada keterangan tambahan."}</p>
+                    <span className="category-tag">{task.category || "Tanpa kategori"}</span><div className="kanban-hub-tags">{(task.hub_codes ?? []).map((code) => <span key={code}>{code}</span>)}</div><h4>{task.title}</h4><p>{task.description || "Tidak ada keterangan tambahan."}</p>
                     <div className="kanban-progress"><span><i style={{ width: `${task.progress}%` }} /></span><small>{task.progress}%</small></div>
                     <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><span className="kanban-assignee">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? "Belum ada PIC"}</span></div>
                     <select className="kanban-status-change" value={task.status} aria-label="Ubah status tugas" onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">Belum dikerjakan</option><option value="in_progress">Sedang berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option></select>
@@ -1372,7 +1395,24 @@ export default function Home() {
         </form>
       </Modal>}
 
-            {toast && <div className="toast">{toast}</div>}
+      {systemDialog && <div className="system-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) finishSystemDialog(null); }}>
+        <section className="system-dialog-card" role="dialog" aria-modal="true" aria-label={systemDialog.title}>
+          <div className={systemDialog.danger ? "system-dialog-icon danger" : "system-dialog-icon"}>{systemDialog.danger ? "!" : "✓"}</div>
+          <div className="system-dialog-eyebrow">HUB WORKSPACE · SYSTEM</div>
+          <h2>{systemDialog.title}</h2>
+          <p>{systemDialog.message}</p>
+          {systemDialog.inputLabel && <label className="system-dialog-input-label">{systemDialog.inputLabel}<input autoFocus value={systemDialogValue} onChange={(e) => setSystemDialogValue(e.target.value)} placeholder={systemDialog.inputPlaceholder || ""} onKeyDown={(e) => { if (e.key === "Enter" && systemDialogValue.trim()) finishSystemDialog(systemDialogValue); }} /></label>}
+          <div className="system-dialog-actions">
+            <button type="button" className="secondary-button" onClick={() => finishSystemDialog(null)}>Batal</button>
+            <button type="button" className={systemDialog.danger ? "system-danger-button" : "primary-button"} disabled={Boolean(systemDialog.inputLabel && !systemDialogValue.trim())} onClick={() => finishSystemDialog(systemDialog.inputLabel ? systemDialogValue : "confirmed")}>{systemDialog.confirmLabel || "Lanjutkan"}</button>
+          </div>
+        </section>
+      </div>}
+      {toast && <div className={`system-island ${toastType}`} role="status" aria-live="polite">
+        <span className="system-island-symbol">{toastType === "error" ? "!" : toastType === "notification" ? "●" : toastType === "info" ? "i" : "✓"}</span>
+        <span className="system-island-copy"><small>{toastType === "notification" ? "NOTIFIKASI HUB" : "HUB WORKSPACE · SYSTEM"}</small><b>{toast}</b></span>
+        <button type="button" className="system-island-close" onClick={() => setToast("")} aria-label="Tutup notifikasi">×</button>
+      </div>}
     </div>
   );
 }
