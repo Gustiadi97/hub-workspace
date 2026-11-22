@@ -84,6 +84,7 @@ export default function Home() {
   const [taskFilter, setTaskFilter] = useState("all");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -312,12 +313,13 @@ export default function Home() {
     if (!supabase || !user || !activeWorkspace) return;
     setBusy(true);
     try {
-      const { error } = await supabase.from("hw_notes").insert({
-        workspace_id: activeWorkspace.id, created_by: user.id,
-        title: noteForm.title.trim() || "Untitled note", content: noteForm.content.trim(),
-      });
+      const payload = { title: noteForm.title.trim() || "Untitled note", content: noteForm.content.trim() };
+      const { error } = editingNoteId
+        ? await supabase.from("hw_notes").update(payload).eq("id", editingNoteId)
+        : await supabase.from("hw_notes").insert({ workspace_id: activeWorkspace.id, created_by: user.id, ...payload });
       if (error) throw error;
       setShowNoteModal(false);
+      setEditingNoteId(null);
       setNoteForm({ title: "", content: "" });
       setRefreshKey((value) => value + 1);
       flash("Note saved.");
@@ -382,9 +384,10 @@ export default function Home() {
     const { error } = await supabase.from("hw_workspace_invites").update({ accepted_at: new Date().toISOString() }).eq("id", invite.id);
     if (error) flash(messageFrom(error));
     else {
-      setWorkspaces((current) => current);
+      if (user) await loadBase(supabase, user);
+      setWorkspaceId(invite.workspace_id);
       setRefreshKey((value) => value + 1);
-      flash("Invitation accepted. Switch to the invited workspace.");
+      flash("Invitation accepted. Workspace joined.");
     }
   };
 
@@ -531,7 +534,7 @@ export default function Home() {
               </section>
               <section className="panel-card notes-preview">
                 <div className="section-head"><div><div className="eyebrow">QUICK NOTES</div><h3>On your mind</h3></div><button className="text-button" onClick={() => setActiveView("notes")}>All notes ↗</button></div>
-                {notes.slice(0, 3).length === 0 ? <EmptyInline title="Capture a thought." detail="Keep useful context close to the work." action="＋ New note" onClick={() => setShowNoteModal(true)} /> : notes.slice(0, 3).map((note) => <button className="note-mini" key={note.id} onClick={() => { setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><span>{note.is_pinned ? "◆" : "◇"}</span><b>{note.title}</b><small>{dateLabel(note.updated_at.slice(0, 10))}</small></button>)}
+                {notes.slice(0, 3).length === 0 ? <EmptyInline title="Capture a thought." detail="Keep useful context close to the work." action="＋ New note" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }} /> : notes.slice(0, 3).map((note) => <button className="note-mini" key={note.id} onClick={() => { setEditingNoteId(note.id); setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><span>{note.is_pinned ? "◆" : "◇"}</span><b>{note.title}</b><small>{dateLabel(note.updated_at.slice(0, 10))}</small></button>)}
               </section>
             </div>
           </>}
@@ -578,9 +581,9 @@ export default function Home() {
           </>}
 
           {activeView === "notes" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">THINK IT THROUGH</div><h1>Your <em>notes.</em></h1><p>Keep ideas, context, and useful details close.</p></div><button className="primary-button" onClick={() => setShowNoteModal(true)}>＋ New note</button></div>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">THINK IT THROUGH</div><h1>Your <em>notes.</em></h1><p>Keep ideas, context, and useful details close.</p></div><button className="primary-button" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }}>＋ New note</button></div>
             {notes.length === 0 ? <section className="panel-card"><EmptyState title="Nothing written down yet." detail="Start with a meeting note, a quick idea, or a useful reminder." action="＋ Create note" onClick={() => setShowNoteModal(true)} /></section> :
-              <div className="notes-grid">{notes.map((note) => <article className="note-card" key={note.id}><div className="note-card-head"><span className="note-symbol">▤</span><div className="note-actions"><button className={note.is_pinned ? "icon-button pinned" : "icon-button"} title="Pin note" onClick={() => togglePin(note)}>◆</button><button className="icon-button danger-hover" title="Delete note" onClick={() => deleteNote(note.id)}>×</button></div></div><button className="note-content-button" onClick={() => { setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><h3>{note.title}</h3><p>{note.content || "An empty note. Add a few thoughts…"}</p></button><div className="note-card-foot"><span>{note.is_pinned ? "PINNED" : "NOTE"}</span><small>Updated {dateLabel(note.updated_at.slice(0, 10))}</small></div></article>)}</div>}
+              <div className="notes-grid">{notes.map((note) => <article className="note-card" key={note.id}><div className="note-card-head"><span className="note-symbol">▤</span><div className="note-actions"><button className={note.is_pinned ? "icon-button pinned" : "icon-button"} title="Pin note" onClick={() => togglePin(note)}>◆</button><button className="icon-button danger-hover" title="Delete note" onClick={() => deleteNote(note.id)}>×</button></div></div><button className="note-content-button" onClick={() => { setEditingNoteId(note.id); setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><h3>{note.title}</h3><p>{note.content || "An empty note. Add a few thoughts…"}</p></button><div className="note-card-foot"><span>{note.is_pinned ? "PINNED" : "NOTE"}</span><small>Updated {dateLabel(note.updated_at.slice(0, 10))}</small></div></article>)}</div>}
           </>}
 
           {activeView === "team" && <>
@@ -604,11 +607,11 @@ export default function Home() {
         <footer className="app-footer"><span>HUB WORKSPACE</span><span>Personal focus. Shared momentum.</span><span>v1.0</span></footer>
       </main>
 
-      <nav className="mobile-nav">{navItems.slice(0, 5).map((item) => <button key={item.id} className={activeView === item.id ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.label.replace("My ", "")}</small></button>)}</nav>
+      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.label.replace("My ", "")}</small></button>)}</nav>
 
       {showTaskModal && <Modal title="Create a task" subtitle="Give the next action a clear owner and direction." onClose={() => setShowTaskModal(false)}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowTaskModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Create task ↗</button></div></form></Modal>}
 
-      {showNoteModal && <Modal title="Write a note" subtitle="A place for the details worth keeping." onClose={() => setShowNoteModal(false)}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowNoteModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Save note ↗</button></div></form></Modal>}
+      {showNoteModal && <Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
 
       {showEventModal && <Modal title="Add an event" subtitle="Put an important moment on the shared calendar." onClose={() => setShowEventModal(false)}><form className="modal-form" onSubmit={createEvent}><label>Event title<input autoFocus value={eventForm.title} onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Team sync, project deadline…" required /></label><label>Description<textarea rows={2} value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} placeholder="What should everyone know?" /></label><label>Location<input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} placeholder="Meeting room or online link" /></label><div className="form-two"><label>Starts at<input type="datetime-local" value={eventForm.starts_at} onChange={(e) => setEventForm({ ...eventForm, starts_at: e.target.value })} required /></label><label>Ends at<input type="datetime-local" value={eventForm.ends_at} onChange={(e) => setEventForm({ ...eventForm, ends_at: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowEventModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Add event ↗</button></div></form></Modal>}
 
