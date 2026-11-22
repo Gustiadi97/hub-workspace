@@ -4,13 +4,15 @@ A focused personal + team workspace built with Next.js and Supabase.
 
 ## Included in v1
 
-- Email/password registration and sign-in using Supabase Auth
+- Admin-created user accounts: ID Login + password (no email entry or self-registration)
+- Super Admin and Admin account management
+- Reset password, rename user, activate/deactivate accounts
 - Personal workspace bootstrap and workspace switching
 - Personal and team workspaces
-- Task list, status changes, priorities, due dates, and Kanban drag-and-drop
+- Task list, PIC assignment, status, priority, due dates, progress, and Kanban drag-and-drop
 - Shared calendar events
 - Notes with pinning and editing
-- Workspace member roles and email-based invitations
+- Workspace member roles and ID-based invitations
 - Row-level security on all `hw_*` tables
 - Responsive desktop and mobile layouts
 
@@ -19,7 +21,7 @@ A focused personal + team workspace built with Next.js and Supabase.
 - Next.js 16.4.6
 - React 19.3.1
 - Supabase JS 2.119.2
-- Supabase SSR 0.12.7 (available for server-rendered auth routes if needed)
+- Supabase Edge Function for privileged account administration
 
 ## Environment variables
 
@@ -30,7 +32,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key
 ```
 
-Only the Supabase publishable key belongs in browser-visible variables. Never add a service-role or secret key to `NEXT_PUBLIC_*`.
+Only the Supabase publishable key belongs in browser-visible variables. Never add a service-role or secret key to `NEXT_PUBLIC_*`. The `hw-admin-users` Edge Function reads the Supabase secret key from Edge Function environment variables.
 
 ## Local development
 
@@ -43,7 +45,7 @@ Open http://localhost:3000.
 
 ## Supabase project
 
-The connected Supabase project is provisioned with the following application-owned tables:
+The connected Supabase project is provisioned with these application-owned tables:
 
 - `hw_workspaces`
 - `hw_workspace_members`
@@ -54,32 +56,64 @@ The connected Supabase project is provisioned with the following application-own
 - `hw_activity_logs`
 - `hw_user_profiles`
 - `hw_platform_admins`
+- `hw_user_accounts`
 - `hw_workspace_invites`
 
 All HUB WORKSPACE data uses the `hw_` prefix. Existing non-HUB tables and functions are intentionally left untouched.
 
-Database migrations applied to the connected project are recorded in Supabase migration history. The RLS and workspace-invitation migrations are also tracked in `supabase/migrations`.
+### Account model
 
-## Auth configuration
+Users sign in with a login ID and password. Internally, Supabase Auth receives a generated non-routable account address of the form:
 
-Open Supabase Dashboard → Authentication → URL Configuration:
+```
+<login-id>@accounts.hub-workspace.invalid
+```
 
-- Set **Site URL** to `https://hub-workspace-gustiadi97.vercel.app`.
-- Add `https://*-gustiadi97.vercel.app/**` to **Redirect URLs** so production and Vercel preview deployments can return to the app.
-- Add `http://localhost:3000/**` for local development.
+This is an internal identifier only. Users do not need an email address, do not receive email, and cannot register themselves. New accounts are created by an Admin from **User Management**.
 
-The sign-up form sends the current app origin as `emailRedirectTo`, so the deployed origin must be present in the Redirect URLs allow list. Email confirmation can remain enabled; new users should confirm their email before signing in.
+- **Super Admin**: can create Admin and User accounts, change application roles, reset passwords, and manage account status.
+- **Admin**: can create User accounts, reset passwords, edit display names, and activate/deactivate User accounts.
+- **User**: can use the workspaces assigned to them.
 
-The app's canonical production alias is `https://hub-workspace-gustiadi97.vercel.app`.
+The password is stored and verified by Supabase Auth, never in the `hw_user_accounts` table. Privileged actions run through the `hw-admin-users` Edge Function and its server-side secret key.
 
-## First administrator
+### First Super Admin bootstrap
 
-The platform-admin table is intentionally not self-service. After the designated owner has registered and signed in, add that user's auth UUID to `public.hw_platform_admins` from the Supabase SQL Editor. Do not use user-editable profile metadata to grant platform privileges.
+One initial Super Admin must be provisioned once from the Supabase Dashboard. This avoids an unsafe public first-user registration route.
+
+1. Open Supabase Dashboard → Authentication → Users → **Add user**.
+2. Use an internal address such as `superadmin@accounts.hub-workspace.invalid`, set the password you choose, and mark the user as confirmed.
+3. Copy the newly created user's UUID.
+4. Run the following SQL in Supabase SQL Editor, replacing the UUID and display name:
+
+```sql
+insert into public.hw_user_accounts
+  (user_id, login_id, display_name, account_role, is_active)
+values
+  ('AUTH-USER-UUID', 'superadmin', 'Super Admin', 'admin', true)
+on conflict (user_id) do update
+set login_id = excluded.login_id,
+    display_name = excluded.display_name,
+    account_role = 'admin',
+    is_active = true;
+
+insert into public.hw_platform_admins (user_id)
+values ('AUTH-USER-UUID')
+on conflict (user_id) do nothing;
+
+update public.hw_user_profiles
+set display_name = 'Super Admin', updated_at = now()
+where user_id = 'AUTH-USER-UUID';
+```
+
+5. Open the production app and sign in with ID `superadmin` and the password set in step 2.
+
+After this one-time bootstrap, create all other users from **User Management** in the app. Do not add a service-role/secret key to the frontend.
 
 ## Deployment
 
-The repository is configured for Vercel. Add both environment variables above to Preview, Production, and Development environments, then deploy the `main` branch.
+The repository is linked to Vercel. Set both environment variables above for Preview, Production, and Development, then deploy the `main` branch. The Supabase Edge Function `hw-admin-users` must also be deployed and active.
 
 ## Notes
 
-This is the first usable application release. Reporting/export, richer task assignment, workspace settings, and administrative audit screens are planned follow-on work.
+The initial release focuses on the core personal/team workspace. Reporting/export, richer task assignment, additional workspace settings, and administrative audit screens are planned follow-on work.
