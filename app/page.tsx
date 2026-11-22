@@ -63,13 +63,12 @@ const priorityMeta = {
 } as const;
 const navItems = [
   { id: "overview", label: "Dashboard", icon: "⌂" },
-  { id: "calendar", label: "Kalender", icon: "▦" },
   { id: "tasks", label: "Daftar Tugas", icon: "☷" },
   { id: "board", label: "Kanban", icon: "▥" },
   { id: "notes", label: "Catatan Cepat", icon: "▤" },
   { id: "settings", label: "Pengaturan", icon: "⚙" },
 ] as const;
-type ViewId = "overview" | "calendar" | "tasks" | "board" | "notes" | "settings" | "team" | "users";
+type ViewId = "overview" | "tasks" | "board" | "notes" | "settings" | "team" | "users";
 
 function dateLabel(value?: string | null) {
   if (!value) return "No due date";
@@ -144,7 +143,6 @@ export default function Home() {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [divisionForm, setDivisionForm] = useState({ name: "", color: "#4386AE" });
   const [editingDivisionId, setEditingDivisionId] = useState<string | null>(null);
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   const activeWorkspace = workspaces.find((item) => item.id === workspaceId) ?? null;
   const canManage = workspaceRole === "owner" || workspaceRole === "admin";
@@ -165,12 +163,6 @@ export default function Home() {
     });
   const avgProgress = tasks.length ? Math.round(tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0) / tasks.length) : 0;
   const completion = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
-  const calendarCells = useMemo(() => {
-    const first = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
-    const offset = (first.getDay() + 6) % 7;
-    const start = new Date(first); start.setDate(first.getDate() - offset);
-    return Array.from({ length: 42 }, (_, index) => { const day = new Date(start); day.setDate(start.getDate() + index); return day; });
-  }, [calendarMonth]);
   const categoryRows = useMemo(() => categories.map((category) => ({
     label: category.name, count: tasks.filter((task) => task.category === category.name).length,
   })), [tasks, categories]);
@@ -873,7 +865,7 @@ export default function Home() {
     </div>
   );
 
-  const title = ({ overview: "Dashboard", calendar: "Kalender", tasks: "Daftar Tugas", board: "Kanban", notes: "Catatan Cepat", settings: "Pengaturan & Backup", team: "Team & Access", users: "Manajemen Pengguna" } as Record<ViewId, string>)[activeView];
+  const title = ({ overview: "Dashboard", tasks: "Daftar Tugas", board: "Kanban", notes: "Catatan Cepat", settings: "Pengaturan & Backup", team: "Team & Access", users: "Manajemen Pengguna" } as Record<ViewId, string>)[activeView];
   const upcomingEvents = events.filter((event) => new Date(event.starts_at).getTime() >= Date.now()).slice(0, 4);
 
   return (
@@ -881,7 +873,7 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand-lockup">
           <div className="brand-mark">H</div>
-          <div><b>HUB WORKSPACE</b><span>Task & Kalender Kerja</span></div>
+          <div><b>HUB WORKSPACE</b><span>Task & Team Workspace</span></div>
         </div>
         <div className="workspace-picker workspace-single">
           <div className="workspace-symbol">⌂</div>
@@ -934,7 +926,7 @@ export default function Home() {
               <span className="cloud-badge"><i /> CLOUD SYNC AKTIF</span>
             </div>
             <div className="page-heading">
-              <div><div className="eyebrow">RINGKASAN AKTIVITAS</div><h1>To-Do List & <em>Kalender Kerja</em></h1><p>Pantau tugas harian, prioritas, deadline, agenda, dan progres pekerjaan.</p></div>
+              <div><div className="eyebrow">RINGKASAN AKTIVITAS</div><h1>Workspace <em>Produktivitas Kerja</em></h1><p>Pantau tugas harian, prioritas, deadline, dan progres pekerjaan tim.</p></div>
               <div className="heading-actions"><button className="secondary-button" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }}>＋ Catatan Cepat</button><button className="primary-button" onClick={() => openTaskEditor()}>＋ Input Task</button><button className="print-button" onClick={() => window.print()}>Print / PDF</button></div>
             </div>
             <div className="stats-grid six-stats">
@@ -943,7 +935,7 @@ export default function Home() {
               <StatCard label="Progress" value={avgProgress} detail="Rata-rata penyelesaian (%)" icon="◔" accent="orange" />
               <StatCard label="Terlambat" value={overdueCount} detail="Butuh follow up" icon="!" accent="red" />
               <StatCard label="Hari Ini" value={todayTasks.length} detail="Tugas jatuh tempo hari ini" icon="◷" />
-              <StatCard label="Minggu Ini" value={weekTasks.length} detail="Agenda 7 hari ke depan" icon="▦" accent="green" />
+              <StatCard label="7 Hari ke Depan" value={weekTasks.length} detail="Deadline tugas mendatang" icon="◷" accent="green" />
             </div>
             <div className="dashboard-columns">
               <section className="panel-card dashboard-visual">
@@ -1028,36 +1020,6 @@ export default function Home() {
             </div></div>
           </>}
  
-          {activeView === "calendar" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">PERENCANAAN & AGENDA</div><h1>Kalender <em>Bulanan</em></h1><p>Pantau deadline tugas dan agenda dalam satu tampilan kalender.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ Input Task</button></div>
-            <section className="panel-card calendar-month-panel">
-              <div className="calendar-month-head"><div><span>KALENDER KERJA</span><h3>{new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(calendarMonth)}</h3></div><div className="calendar-month-controls"><button className="secondary-button" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>←</button><button className="secondary-button" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Hari ini</button><button className="secondary-button" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>→</button></div></div>
-              <div className="month-grid">
-                {["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"].map((day) => <div className="month-weekday" key={day}>{day}</div>)}
-                {calendarCells.map((day) => {
-                  const key = localDateKey(day);
-                  const dayTasks = tasks.filter((task) => task.due_date === key);
-                  const dayEvents = events.filter((event) => localDateKey(new Date(event.starts_at)) === key);
-                  const inMonth = day.getMonth() === calendarMonth.getMonth();
-                  return <div className={`month-day ${inMonth ? "" : "outside-month"} ${key === todayKey ? "is-today" : ""}`} key={key} onDoubleClick={() => openTaskEditor(undefined, key)}>
-                    <div className="month-day-head"><b>{day.getDate()}</b><small>{dayTasks.length + dayEvents.length} agenda</small></div>
-                    <div className="month-day-items">
-                      {dayTasks.slice(0, 3).map((task) => <button key={task.id} className={`calendar-task-chip ${task.status}`} onClick={() => openTaskEditor(task)} title={task.title}>{task.title}</button>)}
-                      {dayEvents.slice(0, 2).map((event) => <span key={event.id} className="calendar-event-chip" title={event.title}>● {event.title}</span>)}
-                      {dayTasks.length + dayEvents.length > 5 && <small className="more-agenda">+{dayTasks.length + dayEvents.length - 5} lainnya</small>}
-                    </div>
-                    <button className="add-on-day" onClick={() => openTaskEditor(undefined, key)}>＋</button>
-                  </div>;
-                })}
-              </div>
-              <p className="calendar-hint">Tips: klik agenda untuk mengedit, atau klik dua kali tanggal untuk membuat tugas baru.</p>
-            </section>
-            <div className="calendar-summary-grid">
-              <section className="panel-card"><div className="section-head"><div><div className="eyebrow">DEADLINE DEKAT</div><h3>Prioritas 7 Hari ke Depan</h3></div><span className="subtle-count">{weekTasks.length} tugas</span></div>{weekTasks.length ? weekTasks.slice(0,5).map((task) => <div className="event-row" key={task.id}><div className="event-date"><b>{new Date(task.due_date + "T00:00:00").getDate()}</b><span>{new Intl.DateTimeFormat("id-ID",{month:"short"}).format(new Date(task.due_date + "T00:00:00"))}</span></div><div className="event-copy"><b>{task.title}</b><span>{dateLabel(task.due_date)} · {priorityMeta[task.priority].label}</span></div><button className="icon-button" onClick={() => openTaskEditor(task)}>✎</button></div>) : <EmptyInline title="Tidak ada deadline dekat." detail="Semua agenda mendatang akan tampil di sini." action="＋ Buat tugas" onClick={() => openTaskEditor()} />}</section>
-              <section className="panel-card calendar-side"><div className="eyebrow">AGENDA WORKSPACE</div><h3>Waktu kerja lebih tertata.</h3><p>Jadikan deadline dan agenda terlihat sejak awal agar tim dapat menentukan prioritas.</p><div className="calendar-side-stat"><b>{todayTasks.length}</b><span>Jatuh tempo hari ini</span></div><div className="calendar-side-stat"><b>{overdueCount}</b><span>Terlambat</span></div></section>
-            </div>
-          </>}
- 
           {activeView === "notes" && <>
             <div className="page-heading compact-heading"><div><div className="eyebrow">RUANG IDE & CATATAN</div><h1>Catatan <em>Cepat</em></h1><p>Simpan informasi, ide, dan hasil diskusi agar mudah ditemukan kembali.</p></div><button className="primary-button" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }}>＋ Catatan Baru</button></div>
             {notes.length === 0 ? <section className="panel-card"><EmptyState title="Belum ada catatan." detail="Mulai dengan catatan meeting, ide singkat, atau informasi penting." action="＋ Buat Catatan" onClick={() => setShowNoteModal(true)} /></section> :
@@ -1131,7 +1093,7 @@ export default function Home() {
         <footer className="app-footer"><span>HUB WORKSPACE</span><span>Personal focus. Shared momentum.</span><span>v1.0</span></footer>
       </main>
 
-      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.id === "overview" ? "Home" : item.id === "tasks" ? "Tugas" : item.id === "calendar" ? "Kalender" : item.id === "board" ? "Kanban" : item.id === "notes" ? "Catatan" : "Akses"}</small></button>)}</nav>
+      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.id === "overview" ? "Home" : item.id === "tasks" ? "Tugas" : item.id === "board" ? "Kanban" : item.id === "notes" ? "Catatan" : "Akses"}</small></button>)}</nav>
 
       {showTaskModal && <Modal className="task-modal" title={editingTaskId ? "Edit Task" : "Input Task"} subtitle="Lengkapi detail agar tugas mudah dipantau dan ditindaklanjuti." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}>
         <form className="task-entry-form" onSubmit={createTask}>
