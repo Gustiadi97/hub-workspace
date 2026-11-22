@@ -181,6 +181,9 @@ export default function Home() {
         setEvents([]);
         setMembers([]);
         setInvites([]);
+        setAccounts([]);
+        setLoginId("");
+        setIsAppAdmin(false);
         setIsPlatformAdmin(false);
       } else if (event === "SIGNED_IN" || event === "USER_UPDATED") {
         setUser(session.user);
@@ -415,11 +418,8 @@ export default function Home() {
     try {
       const targetId = inviteLoginId.trim().toLowerCase().replace(/\\s+/g, "");
       if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(targetId)) throw new Error("Format ID pengguna tidak valid.");
-      const { data: targetAccount, error: lookupError } = await supabase.from("hw_user_accounts").select("login_id,is_active").eq("login_id", targetId).maybeSingle();
-      if (lookupError) throw lookupError;
-      if (!targetAccount || !targetAccount.is_active) throw new Error("ID pengguna tidak ditemukan atau tidak aktif.");
       const { error } = await supabase.from("hw_workspace_invites").insert({
-        workspace_id: activeWorkspace.id, email: null, login_id: targetAccount.login_id, role: inviteRole, invited_by: user.id,
+        workspace_id: activeWorkspace.id, email: null, login_id: targetId, role: inviteRole, invited_by: user.id,
       });
       if (error) throw error;
       setInviteLoginId("");
