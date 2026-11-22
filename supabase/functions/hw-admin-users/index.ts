@@ -90,24 +90,24 @@ Deno.serve(async (req) => {
         return json({ error: "Hanya Super Admin yang dapat membuat akun Admin." }, 403);
       }
 
-      const workspaceId = String(body.workspaceId || "").trim();
       const workspaceRole = String(body.workspaceRole || "member");
-      if (!workspaceId) return json({ error: "Pilih workspace untuk akun baru." }, 400);
       if (!["admin", "member", "viewer"].includes(workspaceRole)) {
         return json({ error: "Role akses workspace tidak valid." }, 400);
       }
 
+      // HUB WORKSPACE uses one shared workspace for all application accounts.
       const { data: targetWorkspace, error: workspaceError } = await adminClient
-        .from("hw_workspaces").select("id,owner_id").eq("id", workspaceId).maybeSingle();
+        .from("hw_workspaces").select("id,owner_id").order("created_at", { ascending: true }).limit(1).maybeSingle();
       if (workspaceError || !targetWorkspace) {
-        return json({ error: "Workspace yang dipilih tidak ditemukan atau tidak dapat diakses." }, 404);
+        return json({ error: "Workspace utama HUB WORKSPACE belum tersedia." }, 404);
       }
+      const workspaceId = targetWorkspace.id;
 
       if (!isSuperAdmin && targetWorkspace.owner_id !== callerId) {
         const { data: callerMembership } = await adminClient.from("hw_workspace_members")
           .select("role").eq("workspace_id", workspaceId).eq("user_id", callerId).maybeSingle();
         if (!callerMembership || !["owner", "admin"].includes(callerMembership.role)) {
-          return json({ error: "Kamu hanya dapat memberikan akses pada workspace yang kamu kelola." }, 403);
+          return json({ error: "Kamu tidak memiliki izin untuk mendaftarkan pengguna ke workspace utama." }, 403);
         }
       }
 
