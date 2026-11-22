@@ -505,11 +505,16 @@ export default function Home() {
     if (!name) return;
     setBusy(true);
     try {
+      const oldCategoryName = editingCategoryId ? categories.find((item) => item.id === editingCategoryId)?.name : null;
       const payload = { name, color: categoryForm.color };
       const result = editingCategoryId
         ? await supabase.from("hw_categories").update(payload).eq("id", editingCategoryId).eq("workspace_id", workspaceId)
         : await supabase.from("hw_categories").insert({ workspace_id: workspaceId, created_by: user.id, ...payload });
       if (result.error) throw result.error;
+      if (editingCategoryId && oldCategoryName && oldCategoryName !== name) {
+        const { error: taskRenameError } = await supabase.from("hw_tasks").update({ category: name }).eq("workspace_id", workspaceId).eq("category", oldCategoryName);
+        if (taskRenameError) throw new Error(`Kategori tersimpan, tetapi nama kategori pada beberapa task belum ikut berubah: ${taskRenameError.message}`);
+      }
       setCategoryForm({ name: "", color: "#16836A" }); setEditingCategoryId(null);
       setRefreshKey((value) => value + 1);
       flash(editingCategoryId ? "Kategori berhasil diperbarui." : "Kategori berhasil ditambahkan.");
