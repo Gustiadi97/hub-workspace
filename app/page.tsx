@@ -31,7 +31,7 @@ type TaskUpdate = {
   id: string;
   task_id: string;
   workspace_id: string;
-  created_by: string;
+  created_by: string | null;
   message: string;
   status_from: Task["status"];
   status_to: Task["status"];
@@ -131,6 +131,9 @@ export default function Home() {
   const [isAppAdmin, setIsAppAdmin] = useState(false);
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<UserAccount | null>(null);
+  const [accountManageForm, setAccountManageForm] = useState({ fullName: "", workspaceRole: "member", accountRole: "user", password: "" });
+  const [savingManagedAccount, setSavingManagedAccount] = useState(false);
   const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" });
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -331,7 +334,7 @@ export default function Home() {
     const loadTaskUpdates = async () => {
       setLoadingTaskUpdates(true);
       const { data, error } = await supabase.from("hw_task_updates")
-        .select("id,task_id,workspace_id,created_by,message,status_from,status_to,progress_from,progress_to,created_at")
+        .select("id,task_id,workspace_id,created_by,author_name,message,status_from,status_to,progress_from,progress_to,created_at")
         .eq("task_id", activeUpdateTask.id)
         .order("created_at", { ascending: true });
       if (!mounted) return;
@@ -348,9 +351,9 @@ export default function Home() {
         : { data: [] as { user_id: string; display_name: string }[] };
       if (!mounted) return;
       const names = new Map((profiles ?? []).map((profile: { user_id: string; display_name: string }) => [profile.user_id, profile.display_name]));
-      setTaskUpdateRows(rows.map((row: Omit<TaskUpdate, "author_name">) => ({
+      setTaskUpdateRows(rows.map((row: Omit<TaskUpdate, "author_name"> & { author_name?: string | null }) => ({
         ...row,
-        author_name: names.get(row.created_by) || (row.created_by === user?.id ? profileName : "Anggota HUB"),
+        author_name: row.author_name || (row.created_by ? names.get(row.created_by) : undefined) || "Pengguna yang sudah dihapus",
       })));
       setLoadingTaskUpdates(false);
     };
@@ -624,50 +627,68 @@ export default function Home() {
     finally { setBusy(false); }
   };
 
-  const changeAccountStatus = async (account: UserAccount) => {
+  const openAccountManager = (account: UserAccount) => {
     if (account.is_super_admin) return;
-    try {
-      await invokeAccountAdmin({ action: "set-active", userId: account.user_id, active: !account.is_active });
-      setRefreshKey((value) => value + 1);
-      flash(account.is_active ? "Akun dinonaktifkan." : "Akun diaktifkan kembali.");
-    } catch (error) { flash(messageFrom(error)); }
+    setEditingAccount(account);
+    setAccountManageForm({
+      fullName: account.display_name,
+      workspaceRole: ["admin", "member", "viewer"].includes(account.workspace_role || "") ? account.workspace_role! : "member",
+      accountRole: account.account_role,
+      password: "",
+    });
   };
 
-  const resetAccountPassword = async (account: UserAccount) => {
-    if (account.is_super_admin) return;
-    const password = window.prompt("Masukkan password sementara baru (minimal 8 karakter):");
-    if (password === null) return;
-    if (password.length < 8 || password.length > 128) {
-      flash("Password harus 8–128 karakter.");
+  const saveManagedAccount = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingAccount) return;
+    const fullName = accountManageForm.fullName.trim();
+    if (fullName.length < 2 || fullName.length > 100) {
+      flash("Nama pengguna harus 2–100 karakter.");
+      return;
+    }
+    if (accountManageForm.password && (accountManageForm.password.length < 8 || accountManageForm.password.length > 128)) {
+      flash("Password baru harus 8–128 karakter.");
+      return;
+    }
+    setSavingManagedAccount(true);
+    try {
+      const payload: Record<string, unknown> = {
+        action: "update-account",
+        userId: editingAccount.user_id,
+        fullName,
+        workspaceRole: accountManageForm.workspaceRole,
+      };
+      if (isPlatformAdmin) payload.accountRole = accountManageForm.accountRole;
+      if (accountManageForm.password) payload.password = accountManageForm.password;
+      await invokeAccountAdmin(payload);
+      setEditingAccount(null);
+      setRefreshKey((value) => value + 1);
+      flash("Pengaturan akun berhasil disimpan.");
+    } catch (error) {
+      flash(messageFrom(error));
+    } finally {
+      setSavingManagedAccount(false);
+    }
+  };
+
+  const deleteManagedAccount = async (account: UserAccount) => {
+    if (account.is_super_admin || account.user_id === user?.id) return;
+    const confirmation = window.prompt(
+      `Penghapusan permanen akun ini tidak dapat dibatalkan. Riwayat tugas dan catatan tetap dipertahankan.\n\nKetik ID pengguna ${account.login_id.toUpperCase()} untuk melanjutkan:`
+    );
+    if (confirmation === null) return;
+    if (confirmation.trim().toUpperCase() !== account.login_id.toUpperCase()) {
+      flash("ID tidak cocok. Akun tidak dihapus.");
       return;
     }
     try {
-      await invokeAccountAdmin({ action: "reset-password", userId: account.user_id, password });
-      flash("Password akun berhasil direset.");
-    } catch (error) { flash(messageFrom(error)); }
-  };
-
-  const renameAccount = async (account: UserAccount) => {
-    if (account.is_super_admin) return;
-    const fullName = window.prompt("Nama pengguna:", account.display_name);
-    if (fullName === null || fullName.trim() === account.display_name) return;
-    try {
-      await invokeAccountAdmin({ action: "update-profile", userId: account.user_id, fullName: fullName.trim() });
+      const result = await invokeAccountAdmin({ action: "delete-account", userId: account.user_id });
       setRefreshKey((value) => value + 1);
-      flash("Nama pengguna berhasil diperbarui.");
-    } catch (error) { flash(messageFrom(error)); }
+      flash(result?.message || "Akun berhasil dihapus.");
+    } catch (error) {
+      flash(messageFrom(error));
+    }
   };
-
-  const updateAccountRole = async (account: UserAccount, role: string) => {
-    if (!isPlatformAdmin || account.is_super_admin) return;
-    try {
-      await invokeAccountAdmin({ action: "set-role", userId: account.user_id, role });
-      setRefreshKey((value) => value + 1);
-      flash("Role akun diperbarui.");
-    } catch (error) { flash(messageFrom(error)); }
-  };
-
-
 
   const saveCategory = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -795,13 +816,18 @@ export default function Home() {
   }), [tasks, taskQuery, taskFilter]);
 
   const signOut = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    setActiveView("overview");
-    setLoginId("");
-    setIsAppAdmin(false);
-    setIsPlatformAdmin(false);
-    setAccounts([]);
+    if (!supabase || !window.confirm("Keluar dari HUB WORKSPACE? Kamu perlu masuk kembali dengan ID dan password untuk melanjutkan.")) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setActiveView("overview");
+      flash("Kamu berhasil keluar dari HUB WORKSPACE.");
+    } catch (error) {
+      flash(`Gagal keluar: ${messageFrom(error)}`);
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (!ready) return <div className="boot-screen"><div className="brand-mark">H</div><span>Preparing your workspace…</span></div>;
@@ -880,7 +906,7 @@ export default function Home() {
           <div className="profile-row">
             <div className="avatar">{initials(profileName)}</div>
             <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
-            <button className="icon-button" onClick={signOut} title="Keluar">↗</button>
+            <button type="button" className="logout-button sidebar-logout" onClick={signOut}><span aria-hidden="true">↪</span> Keluar</button>
           </div>
         </div>
       </aside>
@@ -891,14 +917,14 @@ export default function Home() {
           <div className="topbar-right">
             <span className="sync-label"><i /> Cloud tersinkron</span>
             <span className="top-role">{isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "WORKSPACE USER"}</span>
-            <button className="avatar top-avatar" onClick={signOut} title="Keluar">{initials(profileName)}</button>
+            <div className="avatar top-avatar" aria-label={profileName}>{initials(profileName)}</div><button type="button" className="logout-button topbar-logout" onClick={signOut}><span aria-hidden="true">↪</span> Keluar</button>
           </div>
         </header>
         <div className="page-content">
           <div className="mobile-page-heading">
             <div className="mobile-brand-mark">H</div>
             <div><b>HUB WORKSPACE</b><span>{activeWorkspace?.name ?? "Workspace"}</span></div>
-            <button className="icon-button" onClick={signOut}>↗</button>
+            <button type="button" className="logout-button mobile-logout-button" onClick={signOut}><span aria-hidden="true">↪</span> Keluar</button>
           </div>
 
 
@@ -1064,11 +1090,11 @@ export default function Home() {
                     {accounts.map((account) => <tr key={account.user_id}>
                       <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin aplikasi" : "User"}</span></div></div></td>
                       <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
-                      <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : isPlatformAdmin ? <select className="status-select" value={account.account_role} onChange={(e) => updateAccountRole(account, e.target.value)}><option value="user">User</option><option value="admin">Admin</option></select> : <span className="role-pill">{account.account_role}</span>}</td>
+                      <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : <span className="role-pill">{account.account_role === "admin" ? "Admin aplikasi" : "User"}</span>}</td>
                       <td><span className="role-pill">{account.workspace_role || "Belum diberi akses"}</span></td>
                       <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
                       <td className="date-cell">{dateLabel(account.created_at.slice(0, 10))}</td>
-                      <td><div className="account-actions">{!account.is_super_admin && <><button className="icon-button" title="Ubah nama" onClick={() => renameAccount(account)}>✎</button><button className="icon-button" title="Reset password" onClick={() => resetAccountPassword(account)}>↻</button><button className={account.is_active ? "icon-button danger-hover" : "icon-button"} title={account.is_active ? "Nonaktifkan akun" : "Aktifkan akun"} onClick={() => changeAccountStatus(account)}>{account.is_active ? "⊘" : "✓"}</button></>}</div></td>
+                      <td><div className="account-actions">{!account.is_super_admin && account.user_id !== user?.id && <><button type="button" className="account-action-button manage" onClick={() => openAccountManager(account)}><span>✎</span> Kelola</button><button type="button" className="account-action-button delete" onClick={() => deleteManagedAccount(account)}><span>×</span> Hapus</button></>}</div></td>
                     </tr>)}
                   </tbody></table></div>}
               </section>
@@ -1180,6 +1206,17 @@ export default function Home() {
             {showNoteModal &&<Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
 
       {showEventModal && <Modal title="Add an event" subtitle="Put an important moment on the shared calendar." onClose={() => setShowEventModal(false)}><form className="modal-form" onSubmit={createEvent}><label>Event title<input autoFocus value={eventForm.title} onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Team sync, project deadline…" required /></label><label>Description<textarea rows={2} value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} placeholder="What should everyone know?" /></label><label>Location<input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} placeholder="Meeting room or online link" /></label><div className="form-two"><label>Starts at<input type="datetime-local" value={eventForm.starts_at} onChange={(e) => setEventForm({ ...eventForm, starts_at: e.target.value })} required /></label><label>Ends at<input type="datetime-local" value={eventForm.ends_at} onChange={(e) => setEventForm({ ...eventForm, ends_at: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowEventModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Add event ↗</button></div></form></Modal>}
+
+      {editingAccount && <Modal className="account-manage-modal" title="Kelola Akun Pengguna" subtitle={`ID Login: ${editingAccount.login_id.toUpperCase()}`} onClose={() => setEditingAccount(null)}>
+        <form className="modal-form account-manage-form" onSubmit={saveManagedAccount}>
+          <div className="account-manage-warning"><b>Pengaturan akun</b><span>Perubahan nama, hak akses, dan password akan langsung berlaku setelah disimpan.</span></div>
+          <label>Nama lengkap<input autoFocus value={accountManageForm.fullName} onChange={(e) => setAccountManageForm({ ...accountManageForm, fullName: e.target.value })} minLength={2} maxLength={100} required /></label>
+          <label>Akses workspace utama<select value={accountManageForm.workspaceRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label>
+          {isPlatformAdmin && <label>Role aplikasi<select value={accountManageForm.accountRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, accountRole: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
+          <label>Password baru <span className="optional-field">(opsional)</span><input type="password" value={accountManageForm.password} onChange={(e) => setAccountManageForm({ ...accountManageForm, password: e.target.value })} placeholder="Kosongkan jika tidak ingin mengubah password" minLength={8} maxLength={128} autoComplete="new-password" /></label>
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setEditingAccount(null)}>Batal</button><button className="primary-button" disabled={savingManagedAccount}>{savingManagedAccount ? "Menyimpan…" : "Simpan Perubahan"}</button></div>
+        </form>
+      </Modal>}
 
       {showAccountModal && <Modal title="Buat Akun & Atur Akses" subtitle="Akun langsung ditambahkan ke workspace utama HUB WORKSPACE setelah disimpan." onClose={() => setShowAccountModal(false)}>
         <form className="modal-form account-entry-form" onSubmit={createAccount}>
