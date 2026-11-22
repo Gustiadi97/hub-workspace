@@ -1067,7 +1067,7 @@ export default function Home() {
         <div className="sidebar-bottom">
           <div className="profile-row">
             <div className="avatar">{initials(profileName)}</div>
-            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {myHubCode || "HUB belum diatur"} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
+            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {isPlatformAdmin || isAppAdmin ? "SEMUA HUB" : myHubCode || "HUB belum diatur"} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
             
           </div>
         </div>
