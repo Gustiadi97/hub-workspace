@@ -277,6 +277,8 @@ export default function Home() {
         setHubs([]);
         setNotifications([]);
         setNotificationsOpen(false);
+        setToast("");
+        setSystemDialog(null);
         setWorkspaces([]);
         setWorkspaceId("");
         setTasks([]);
@@ -588,7 +590,7 @@ export default function Home() {
   };
 
   const deleteTask = async (taskId: string) => {
-    if (!supabase || !window.confirm("Hapus tugas ini beserta seluruh riwayat update-nya?")) return;
+    if (!supabase || !(await confirmSystem("Hapus Tugas?", "Tugas ini beserta seluruh riwayat update-nya akan dihapus permanen.", "Hapus Tugas", true))) return;
     const { error } = await supabase.from("hw_tasks").delete().eq("id", taskId);
     if (error) flash(messageFrom(error));
     else {
@@ -653,7 +655,7 @@ export default function Home() {
   };
 
   const deleteNote = async (noteId: string) => {
-    if (!supabase || !window.confirm("Delete this note?")) return;
+    if (!supabase || !(await confirmSystem("Hapus Catatan?", "Catatan ini akan dihapus permanen.", "Hapus Catatan", true))) return;
     const { error } = await supabase.from("hw_notes").delete().eq("id", noteId);
     if (error) flash(messageFrom(error));
     else { setNotes((current) => current.filter((note) => note.id !== noteId)); flash("Note deleted."); }
@@ -786,12 +788,17 @@ export default function Home() {
 
   const deleteManagedAccount = async (account: UserAccount) => {
     if (account.is_super_admin || account.user_id === user?.id) return;
-    const confirmation = window.prompt(
-      `Penghapusan permanen akun ini tidak dapat dibatalkan. Riwayat tugas dan catatan tetap dipertahankan.\n\nKetik ID pengguna ${account.login_id.toUpperCase()} untuk melanjutkan:`
-    );
+    const confirmation = await requestSystemDialog({
+      title: "Hapus Akun Pengguna",
+      message: "Penghapusan akun tidak dapat dibatalkan. Riwayat tugas, catatan, dan percakapan akan tetap disimpan. Ketik ID login untuk mengonfirmasi.",
+      inputLabel: `Ketik ID pengguna ${account.login_id.toUpperCase()}`,
+      inputPlaceholder: account.login_id.toUpperCase(),
+      confirmLabel: "Hapus Akun",
+      danger: true,
+    });
     if (confirmation === null) return;
     if (confirmation.trim().toUpperCase() !== account.login_id.toUpperCase()) {
-      flash("ID tidak cocok. Akun tidak dihapus.");
+      flash("ID tidak cocok. Akun tidak dihapus.", "error");
       return;
     }
     try {
@@ -827,7 +834,7 @@ export default function Home() {
     finally { setBusy(false); }
   };
   const removeCategory = async (category: Category) => {
-    if (!supabase || !window.confirm(`Hapus kategori "${category.name}"?`)) return;
+    if (!supabase || !(await confirmSystem("Hapus Kategori?", `Hapus kategori "${category.name}"?`, "Hapus Kategori", true))) return;
     if (tasks.some((task) => task.category === category.name)) { flash("Kategori masih dipakai oleh task. Ubah kategori task terlebih dahulu."); return; }
     const { error } = await supabase.from("hw_categories").delete().eq("id", category.id).eq("workspace_id", workspaceId);
     if (error) flash(messageFrom(error));
@@ -852,7 +859,7 @@ export default function Home() {
     finally { setBusy(false); }
   };
   const removeDivision = async (division: Division) => {
-    if (!supabase || !window.confirm(`Hapus divisi "${division.name}"?`)) return;
+    if (!supabase || !(await confirmSystem("Hapus Divisi?", `Hapus divisi "${division.name}"?`, "Hapus Divisi", true))) return;
     if (tasks.some((task) => (task.division_ids ?? []).includes(division.id))) { flash("Divisi masih dipakai oleh task. Ubah pilihan divisi pada task terlebih dahulu."); return; }
     const { error } = await supabase.from("hw_divisions").delete().eq("id", division.id).eq("workspace_id", workspaceId);
     if (error) flash(messageFrom(error));
@@ -919,7 +926,7 @@ export default function Home() {
   const restoreBackup = async (file?: File) => {
     if (!file || !supabase || !user || !activeWorkspace) return;
     if (file.size > 10 * 1024 * 1024) { flash("Ukuran file backup maksimal 10 MB."); return; }
-    if (!window.confirm("Pulihkan data dari file backup? Data yang ada tidak dihapus; data backup akan ditambahkan ke workspace ini.")) return;
+    if (!(await confirmSystem("Pulihkan Backup?", "Data dari file backup akan ditambahkan ke workspace ini. Data lama tidak dihapus.", "Pulihkan Data"))) return;
     setBusy(true);
     try {
       const parsed = JSON.parse(await file.text()) as { app?: string; backupVersion?: number; data?: { tasks?: Task[]; notes?: Note[]; events?: EventItem[] } };
@@ -969,7 +976,7 @@ export default function Home() {
   }), [tasks, taskQuery, taskFilter]);
 
   const signOut = async () => {
-    if (!supabase || !window.confirm("Keluar dari HUB WORKSPACE? Kamu perlu masuk kembali dengan ID dan password untuk melanjutkan.")) return;
+    if (!supabase || !(await confirmSystem("Keluar dari HUB WORKSPACE?", "Kamu perlu masuk kembali menggunakan ID dan password untuk melanjutkan.", "Keluar"))) return;
     setBusy(true);
     try {
       const { error } = await supabase.auth.signOut();
