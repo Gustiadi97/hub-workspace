@@ -22,6 +22,7 @@ type Task = {
   start_date: string | null;
   due_date: string | null;
   category: string;
+  division_ids: string[];
   assigned_to: string | null;
   created_at: string;
   created_by: string;
@@ -30,7 +31,9 @@ type Note = { id: string; title: string; content: string; is_pinned: boolean; up
 type EventItem = { id: string; title: string; description: string; location: string; starts_at: string; ends_at: string | null; all_day: boolean };
 type Member = { id: string; user_id: string; role: string; display_name: string };
 type Invite = { id: string; workspace_id: string; email: string | null; login_id: string | null; role: string; accepted_at: string | null; created_at: string; invited_by: string };
-type UserAccount = { user_id: string; login_id: string; display_name: string; account_role: "admin" | "user"; is_active: boolean; created_at: string; is_super_admin?: boolean };
+type Category = { id: string; name: string; color: string };
+type Division = { id: string; name: string; color: string };
+type UserAccount = { user_id: string; login_id: string; display_name: string; account_role: "admin" | "user"; is_active: boolean; created_at: string; is_super_admin?: boolean; workspace_role?: string };
 
 const statusMeta = {
   todo: { label: "To do", tone: "slate" },
@@ -71,18 +74,6 @@ function messageFrom(error: unknown) {
 function localDateKey(date: Date) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
-const taskCategoryOptions = ["Operasional", "Administrasi", "Meeting / Rapat", "Monitoring", "Laporan", "Project / Program", "Follow Up", "Pekerjaan Umum", "Lainnya"] as const;
-function taskCategory(task: Task) {
-  if (task.category?.trim()) return task.category;
-  const value = `${task.title} ${task.description ?? ""}`.toLowerCase();
-  if (/meeting|rapat|briefing|review|koordinasi|sync/.test(value)) return "Meeting / Rapat";
-  if (/laporan|report|analisis|audit|monitoring/.test(value)) return "Laporan";
-  if (/budget|anggaran|biaya|keuangan|invoice/.test(value)) return "Keuangan / Budget";
-  if (/dokumen|arsip|surat|file|administrasi/.test(value)) return "Dokumen & Arsip";
-  if (/training|coaching|pelatihan|sosialisasi|hr/.test(value)) return "HR / Training";
-  if (/follow.?up|tindak lanjut|follow up|konfirmasi/.test(value)) return "Follow Up";
-  return "Pekerjaan Umum";
-}
 
 export default function Home() {
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
@@ -96,7 +87,8 @@ export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [invites, setInvites] = useState<Invite[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [divisions, setDivisions] = useState<Division[]>([]);
   const [activeView, setActiveView] = useState<ViewId>("overview");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskFilter, setTaskFilter] = useState("all");
@@ -105,7 +97,6 @@ export default function Home() {
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
-  const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -116,15 +107,16 @@ export default function Home() {
   const [isAppAdmin, setIsAppAdmin] = useState(false);
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceId: "", workspaceRole: "member" });
+  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" });
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
-  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", start_date: localDateKey(new Date()), due_date: "", category: "Operasional", assigned_to: "", status: "todo", progress: 0 });
+  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", start_date: localDateKey(new Date()), due_date: "", category: "Operasional", division_ids: [] as string[], assigned_to: "", status: "todo", progress: 0 });
   const [noteForm, setNoteForm] = useState({ title: "", content: "" });
   const [eventForm, setEventForm] = useState({ title: "", description: "", location: "", starts_at: "", ends_at: "" });
-  const [workspaceForm, setWorkspaceForm] = useState({ name: "", workspace_type: "team" as "personal" | "team" });
-  const [inviteLoginId, setInviteLoginId] = useState("");
-  const [inviteRole, setInviteRole] = useState("member");
+  const [categoryForm, setCategoryForm] = useState({ name: "", color: "#16836A" });
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [divisionForm, setDivisionForm] = useState({ name: "", color: "#4386AE" });
+  const [editingDivisionId, setEditingDivisionId] = useState<string | null>(null);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   const activeWorkspace = workspaces.find((item) => item.id === workspaceId) ?? null;
@@ -145,9 +137,9 @@ export default function Home() {
     const start = new Date(first); start.setDate(first.getDate() - offset);
     return Array.from({ length: 42 }, (_, index) => { const day = new Date(start); day.setDate(start.getDate() + index); return day; });
   }, [calendarMonth]);
-  const categoryRows = useMemo(() => taskCategoryOptions.map((label) => ({
-    label, count: tasks.filter((task) => taskCategory(task) === label).length,
-  })), [tasks]);
+  const categoryRows = useMemo(() => categories.map((category) => ({
+    label: category.name, count: tasks.filter((task) => task.category === category.name).length,
+  })), [tasks, categories]);
   const priorityRows = useMemo(() => (["urgent", "high", "medium", "low"] as const).map((priority) => ({
     label: priorityMeta[priority].label, count: tasks.filter((task) => task.priority === priority).length, tone: priority,
   })), [tasks]);
@@ -168,10 +160,10 @@ export default function Home() {
     setIsAppAdmin(accountInfo.account_role === "admin");
     const { data: spaceData, error: spaceError } = await client.from("hw_workspaces").select("id,name,workspace_type,owner_id,description").order("created_at", { ascending: true });
     if (spaceError) throw spaceError;
-    let available = (spaceData ?? []) as Workspace[];
+    let available = ((spaceData ?? []) as Workspace[]).slice(0, 1);
     if (!available.length) {
       const { data: created, error } = await client.from("hw_workspaces")
-        .insert({ name: "My workspace", workspace_type: "personal", owner_id: account.id, description: "Your personal space to plan and focus." })
+        .insert({ name: "HUB WORKSPACE", workspace_type: "team", owner_id: account.id, description: "Workspace utama seluruh pengguna HUB WORKSPACE." })
         .select("id,name,workspace_type,owner_id,description").single();
       if (error) throw error;
       available = [created as Workspace];
@@ -215,7 +207,6 @@ export default function Home() {
         setNotes([]);
         setEvents([]);
         setMembers([]);
-        setInvites([]);
         setAccounts([]);
         setLoginId("");
         setIsAppAdmin(false);
@@ -238,21 +229,23 @@ export default function Home() {
     let mounted = true;
     const load = async () => {
       setBusy(true);
-      const [taskRes, noteRes, eventRes, memberRes, inviteRes] = await Promise.all([
+      const [taskRes, noteRes, eventRes, memberRes, categoryRes, divisionRes] = await Promise.all([
         supabase.from("hw_tasks").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false }),
         supabase.from("hw_notes").select("*").eq("workspace_id", workspaceId).order("updated_at", { ascending: false }),
         supabase.from("hw_calendar_events").select("*").eq("workspace_id", workspaceId).order("starts_at", { ascending: true }),
         supabase.from("hw_workspace_members").select("id,user_id,role").eq("workspace_id", workspaceId).order("joined_at", { ascending: true }),
-        supabase.from("hw_workspace_invites").select("*").order("created_at", { ascending: false }),
+        supabase.from("hw_categories").select("id,name,color").eq("workspace_id", workspaceId).order("name"),
+        supabase.from("hw_divisions").select("id,name,color").eq("workspace_id", workspaceId).order("name"),
       ]);
       if (!mounted) return;
-      if (taskRes.error || noteRes.error || eventRes.error || memberRes.error || inviteRes.error) {
-        flash(messageFrom(taskRes.error || noteRes.error || eventRes.error || memberRes.error || inviteRes.error));
+      if (taskRes.error || noteRes.error || eventRes.error || memberRes.error || categoryRes.error || divisionRes.error) {
+        flash(messageFrom(taskRes.error || noteRes.error || eventRes.error || memberRes.error || categoryRes.error || divisionRes.error));
       }
       setTasks((taskRes.data ?? []) as Task[]);
       setNotes((noteRes.data ?? []) as Note[]);
       setEvents((eventRes.data ?? []) as EventItem[]);
-      setInvites((inviteRes.data ?? []) as Invite[]);
+      setCategories((categoryRes.data ?? []) as Category[]);
+      setDivisions((divisionRes.data ?? []) as Division[]);
       const memberRows = (memberRes.data ?? []) as { id: string; user_id: string; role: string }[];
       setWorkspaceRole(memberRows.find((member) => member.user_id === user.id)?.role ?? (activeWorkspace?.owner_id === user.id ? "owner" : "viewer"));
       if (memberRows.length) {
@@ -278,9 +271,10 @@ export default function Home() {
     }
     let mounted = true;
     const loadAccounts = async () => {
-      const [{ data: accountRows, error }, { data: superRows }] = await Promise.all([
+      const [{ data: accountRows, error }, { data: superRows }, { data: memberRows }] = await Promise.all([
         supabase.from("hw_user_accounts").select("user_id,login_id,display_name,account_role,is_active,created_at").order("created_at", { ascending: false }),
         supabase.from("hw_platform_admins").select("user_id"),
+        supabase.from("hw_workspace_members").select("user_id,role").eq("workspace_id", workspaceId),
       ]);
       if (!mounted) return;
       if (error) {
@@ -288,11 +282,14 @@ export default function Home() {
         return;
       }
       const superIds = new Set((superRows ?? []).map((row: { user_id: string }) => row.user_id));
-      setAccounts(((accountRows ?? []) as UserAccount[]).map((row) => ({ ...row, is_super_admin: superIds.has(row.user_id) })));
+      const memberRoles = new Map((memberRows ?? []).map((row: { user_id: string; role: string }) => [row.user_id, row.role]));
+      setAccounts(((accountRows ?? []) as UserAccount[]).map((row) => ({
+        ...row, is_super_admin: superIds.has(row.user_id), workspace_role: memberRoles.get(row.user_id) || "Belum diberi akses",
+      })));
     };
     void loadAccounts();
     return () => { mounted = false; };
-  }, [supabase, user, isAppAdmin, isPlatformAdmin, refreshKey, flash]);
+  }, [supabase, user, workspaceId, isAppAdmin, isPlatformAdmin, refreshKey, flash]);
 
   const doAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -313,37 +310,19 @@ export default function Home() {
     }
   };
 
-  const createWorkspace = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!supabase || !user) return;
-    setBusy(true);
-    try {
-      const name = workspaceForm.name.trim();
-      if (!name) throw new Error("Workspace name is required.");
-      const { data, error } = await supabase.from("hw_workspaces")
-        .insert({ name, workspace_type: workspaceForm.workspace_type, owner_id: user.id })
-        .select("id,name,workspace_type,owner_id,description").single();
-      if (error) throw error;
-      setWorkspaces((current) => [...current, data as Workspace]);
-      setWorkspaceId(data.id);
-      setShowWorkspaceModal(false);
-      setWorkspaceForm({ name: "", workspace_type: "team" });
-      flash("Workspace created.");
-    } catch (error) {
-      flash(messageFrom(error));
-    } finally { setBusy(false); }
-  };
-
   const defaultTaskForm = (dueDate = "") => ({
     title: "", description: "", priority: "medium", start_date: localDateKey(new Date()),
-    due_date: dueDate, category: "Operasional", assigned_to: user?.id ?? "", status: "todo", progress: 0,
+    due_date: dueDate, category: categories[0]?.name ?? "Operasional", division_ids: [] as string[],
+    assigned_to: user?.id ?? "", status: "todo", progress: 0,
   });
   const openTaskEditor = (task?: Task, dueDate?: string) => {
     setEditingTaskId(task?.id ?? null);
     setTaskForm(task ? {
       title: task.title, description: task.description ?? "", priority: task.priority,
       start_date: task.start_date ?? localDateKey(new Date()), due_date: task.due_date ?? "",
-      category: task.category || "Pekerjaan Umum", assigned_to: task.assigned_to ?? "",
+      category: task.category || categories[0]?.name || "Pekerjaan Umum",
+      division_ids: Array.isArray(task.division_ids) ? task.division_ids : [],
+      assigned_to: task.assigned_to ?? "",
       status: task.status, progress: task.progress ?? 0,
     } : defaultTaskForm(dueDate ?? ""));
     setShowTaskModal(true);
@@ -357,7 +336,8 @@ export default function Home() {
       const payload = {
         title: taskForm.title.trim(), description: taskForm.description.trim(), priority: taskForm.priority,
         start_date: taskForm.start_date || null, due_date: taskForm.due_date || null,
-        category: taskForm.category, assigned_to: taskForm.assigned_to || null, status: taskForm.status,
+        category: taskForm.category, division_ids: taskForm.division_ids.filter((id: string) => divisions.some((division) => division.id === id)),
+        assigned_to: taskForm.assigned_to || null, status: taskForm.status,
         progress: taskForm.status === "done" ? 100 : Math.max(0, Math.min(100, Number(taskForm.progress) || 0)),
       };
       const { error } = editingTaskId
@@ -444,36 +424,6 @@ export default function Home() {
     finally { setBusy(false); }
   };
 
-  const sendInvite = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!supabase || !user || !activeWorkspace) return;
-    setBusy(true);
-    try {
-      const targetId = inviteLoginId.trim().toLowerCase().replace(/\s+/g, "");
-      if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(targetId)) throw new Error("Format ID pengguna tidak valid.");
-      const { error } = await supabase.from("hw_workspace_invites").insert({
-        workspace_id: activeWorkspace.id, email: null, login_id: targetId, role: inviteRole, invited_by: user.id,
-      });
-      if (error) throw error;
-      setInviteLoginId("");
-      setRefreshKey((value) => value + 1);
-      flash("Undangan dibuat. Pengguna dapat menerimanya setelah login.");
-    } catch (error) { flash(messageFrom(error)); }
-    finally { setBusy(false); }
-  };
-
-  const acceptInvite = async (invite: Invite) => {
-    if (!supabase) return;
-    const { error } = await supabase.from("hw_workspace_invites").update({ accepted_at: new Date().toISOString() }).eq("id", invite.id);
-    if (error) flash(messageFrom(error));
-    else {
-      if (user) await loadBase(supabase, user);
-      setWorkspaceId(invite.workspace_id);
-      setRefreshKey((value) => value + 1);
-      flash("Invitation accepted. Workspace joined.");
-    }
-  };
-
   const invokeAccountAdmin = async (payload: Record<string, unknown>) => {
     if (!supabase) throw new Error("Supabase belum terhubung.");
     const { data, error } = await supabase.functions.invoke("hw-admin-users", { body: payload });
@@ -493,12 +443,11 @@ export default function Home() {
         fullName: accountForm.fullName.trim(),
         password: accountForm.password,
         role: isPlatformAdmin ? accountForm.role : "user",
-        workspaceId: accountForm.workspaceId,
         workspaceRole: accountForm.workspaceRole,
       };
       await invokeAccountAdmin(payload);
       setShowAccountModal(false);
-      setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceId, workspaceRole: "member" });
+      setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" });
       setRefreshKey((value) => value + 1);
       flash("Akun berhasil dibuat dan langsung diberi akses workspace.");
     } catch (error) { flash(messageFrom(error)); }
@@ -549,6 +498,58 @@ export default function Home() {
   };
 
 
+
+  const saveCategory = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase || !user || !workspaceId || !canManage) return;
+    const name = categoryForm.name.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const payload = { name, color: categoryForm.color };
+      const result = editingCategoryId
+        ? await supabase.from("hw_categories").update(payload).eq("id", editingCategoryId).eq("workspace_id", workspaceId)
+        : await supabase.from("hw_categories").insert({ workspace_id: workspaceId, created_by: user.id, ...payload });
+      if (result.error) throw result.error;
+      setCategoryForm({ name: "", color: "#16836A" }); setEditingCategoryId(null);
+      setRefreshKey((value) => value + 1);
+      flash(editingCategoryId ? "Kategori berhasil diperbarui." : "Kategori berhasil ditambahkan.");
+    } catch (error) { flash(messageFrom(error)); }
+    finally { setBusy(false); }
+  };
+  const removeCategory = async (category: Category) => {
+    if (!supabase || !window.confirm(`Hapus kategori "${category.name}"?`)) return;
+    if (tasks.some((task) => task.category === category.name)) { flash("Kategori masih dipakai oleh task. Ubah kategori task terlebih dahulu."); return; }
+    const { error } = await supabase.from("hw_categories").delete().eq("id", category.id).eq("workspace_id", workspaceId);
+    if (error) flash(messageFrom(error));
+    else { setRefreshKey((value) => value + 1); flash("Kategori dihapus."); }
+  };
+  const saveDivision = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase || !user || !workspaceId || !canManage) return;
+    const name = divisionForm.name.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      const payload = { name, color: divisionForm.color, updated_at: new Date().toISOString() };
+      const result = editingDivisionId
+        ? await supabase.from("hw_divisions").update(payload).eq("id", editingDivisionId).eq("workspace_id", workspaceId)
+        : await supabase.from("hw_divisions").insert({ workspace_id: workspaceId, created_by: user.id, ...payload });
+      if (result.error) throw result.error;
+      setDivisionForm({ name: "", color: "#4386AE" }); setEditingDivisionId(null);
+      setRefreshKey((value) => value + 1);
+      flash(editingDivisionId ? "Divisi berhasil diperbarui." : "Divisi berhasil ditambahkan.");
+    } catch (error) { flash(messageFrom(error)); }
+    finally { setBusy(false); }
+  };
+  const removeDivision = async (division: Division) => {
+    if (!supabase || !window.confirm(`Hapus divisi "${division.name}"?`)) return;
+    if (tasks.some((task) => (task.division_ids ?? []).includes(division.id))) { flash("Divisi masih dipakai oleh task. Ubah pilihan divisi pada task terlebih dahulu."); return; }
+    const { error } = await supabase.from("hw_divisions").delete().eq("id", division.id).eq("workspace_id", workspaceId);
+    if (error) flash(messageFrom(error));
+    else { setRefreshKey((value) => value + 1); flash("Divisi dihapus."); }
+  };
+
   const downloadBackup = () => {
     const backup = {
       app: "HUB WORKSPACE",
@@ -587,7 +588,8 @@ export default function Home() {
         progress: Math.max(0, Math.min(100, Number(item.progress) || 0)),
         start_date: item.start_date || null,
         due_date: item.due_date || null,
-        category: typeof item.category === "string" && item.category.trim() ? item.category : "Pekerjaan Umum",
+        category: typeof item.category === "string" && categories.some((category) => category.name === item.category) ? item.category : (categories[0]?.name ?? "Operasional"),
+        division_ids: Array.isArray(item.division_ids) ? item.division_ids.filter((id: string) => divisions.some((division) => division.id === id)) : [],
         assigned_to: item.assigned_to && members.some((member) => member.user_id === item.assigned_to) ? item.assigned_to : null,
       }));
       const noteRows = backupNotes.filter((item) => item && typeof item.content === "string").map((item) => ({
@@ -671,7 +673,6 @@ export default function Home() {
   );
 
   const title = ({ overview: "Dashboard", calendar: "Kalender", tasks: "Daftar Tugas", board: "Kanban", notes: "Catatan Cepat", settings: "Pengaturan & Backup", team: "Team & Access", users: "Manajemen Pengguna" } as Record<ViewId, string>)[activeView];
-  const pendingInvites = invites.filter((invite) => !invite.accepted_at && (invite.login_id?.toLowerCase() === loginId.toLowerCase() || invite.email?.toLowerCase() === (user.email ?? "").toLowerCase()));
   const upcomingEvents = events.filter((event) => new Date(event.starts_at).getTime() >= Date.now()).slice(0, 4);
 
   return (
@@ -681,12 +682,9 @@ export default function Home() {
           <div className="brand-mark">H</div>
           <div><b>HUB WORKSPACE</b><span>Task & Kalender Kerja</span></div>
         </div>
-        <div className="workspace-picker">
+        <div className="workspace-picker workspace-single">
           <div className="workspace-symbol">⌂</div>
-          <div className="workspace-picker-copy"><small>WORKSPACE AKTIF</small><strong>{activeWorkspace?.name ?? "Memuat workspace…"}</strong></div>
-          <select aria-label="Pilih workspace" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
-            {workspaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
-          </select>
+          <div className="workspace-picker-copy"><small>WORKSPACE UTAMA</small><strong>HUB WORKSPACE</strong></div>
         </div>
         <div className="sidebar-section-label">MENU UTAMA</div>
         <nav className="side-nav">
@@ -728,7 +726,6 @@ export default function Home() {
             <button className="icon-button" onClick={signOut}>↗</button>
           </div>
 
-          {pendingInvites.length > 0 && <div className="invite-banner"><div><b>Kamu memiliki {pendingInvites.length} undangan workspace</b><span>Periksa dan terima undangan melalui menu Pengaturan.</span></div><button onClick={() => setActiveView("settings")}>Lihat undangan ↗</button></div>}
 
           {activeView === "overview" && <>
             <div className="workspace-banner">
@@ -782,11 +779,12 @@ export default function Home() {
             <section className="panel-card table-card">
               <div className="task-list-heading"><div><b>Daftar seluruh pekerjaan</b><span>{visibleTasks.length} tugas ditemukan</span></div><span className="table-info">Klik Edit untuk memperbarui data tugas</span></div>
               {visibleTasks.length === 0 ? <EmptyState title="Belum ada tugas pada filter ini." detail="Tambahkan pekerjaan atau ubah filter pencarian." action="＋ Input Task" onClick={() => openTaskEditor()} /> :
-                <div className="task-table-wrap"><table className="task-table office-task-table"><thead><tr><th>Tanggal</th><th>Deadline</th><th>Kategori</th><th>Tugas</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
+                <div className="task-table-wrap"><table className="task-table office-task-table"><thead><tr><th>Tanggal</th><th>Deadline</th><th>Kategori</th><th>Divisi</th><th>Tugas</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
                   {visibleTasks.map((task) => <tr key={task.id}>
                     <td className="date-cell">{dateLabel(task.start_date || task.created_at.slice(0,10))}</td>
                     <td className="date-cell">{dateLabel(task.due_date)}</td>
-                    <td><span className="category-tag">{taskCategory(task)}</span></td>
+                    <td><span className="category-tag">{task.category || "Tanpa kategori"}</span></td>
+                    <td><div className="task-division-tags">{(task.division_ids ?? []).map((id) => divisions.find((division) => division.id === id)).filter(Boolean).map((division) => <span key={division!.id}>{division!.name}</span>)}</div></td>
                     <td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "Tidak ada keterangan"}</span></div></td>
                     <td><span className="pic-name">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? (task.assigned_to === user?.id ? profileName : "Belum ditentukan")}</span></td>
                     <td><span className={`priority-text ${task.priority}`}>{priorityMeta[task.priority].label}</span></td>
@@ -808,7 +806,7 @@ export default function Home() {
                   <div className="kanban-head"><span className={`status-dot ${statusMeta[status].tone}`} /><b>{status === "todo" ? "Belum Dikerjakan" : status === "in_progress" ? "Sedang Berjalan" : status === "waiting" ? "Menunggu" : "Selesai"}</b><small>{columnTasks.length}</small></div>
                   {columnTasks.map((task) => <article className="kanban-card" key={task.id} draggable onDragStart={() => setDraggedTask(task.id)} onDragEnd={() => setDraggedTask(null)}>
                     <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Hapus task" onClick={() => deleteTask(task.id)}>×</button></div></div>
-                    <span className="category-tag">{taskCategory(task)}</span><h4>{task.title}</h4><p>{task.description || "Tidak ada keterangan tambahan."}</p>
+                    <span className="category-tag">{task.category || "Tanpa kategori"}</span><h4>{task.title}</h4><p>{task.description || "Tidak ada keterangan tambahan."}</p>
                     <div className="kanban-progress"><span><i style={{ width: `${task.progress}%` }} /></span><small>{task.progress}%</small></div>
                     <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><span className="kanban-assignee">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? "Belum ada PIC"}</span></div>
                     <select className="kanban-status-change" value={task.status} aria-label="Ubah status tugas" onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">Belum dikerjakan</option><option value="in_progress">Sedang berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option></select>
@@ -856,59 +854,56 @@ export default function Home() {
           </>}
  
           {activeView === "settings" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">PREFERENSI & AKSES WORKSPACE</div><h1>Pengaturan <em>Workspace</em></h1><p>Kelola backup, anggota, akses pengguna, dan hak kerja dari satu halaman.</p></div></div>
-            <div className="settings-grid">
-              <section className="panel-card settings-card"><div className="settings-icon">⇩</div><div className="eyebrow">DATA & KEAMANAN</div><h3>Backup Workspace</h3><p>Unduh salinan tugas, catatan, dan agenda dalam format JSON untuk disimpan sebagai arsip.</p><button className="primary-button" onClick={downloadBackup}>Unduh Backup JSON ↗</button><small>File backup hanya berisi data workspace yang sedang aktif.</small></section>
-              <section className="panel-card settings-card"><div className="settings-icon">↥</div><div className="eyebrow">PEMULIHAN DATA</div><h3>Restore dari Backup</h3><p>Pulihkan data dari file backup HUB WORKSPACE. Data akan ditambahkan tanpa menghapus data yang sudah ada.</p><label className="restore-file-button">Pilih File Backup<input type="file" accept="application/json,.json" onChange={(e) => { const file = e.target.files?.[0]; if (file) void restoreBackup(file); e.currentTarget.value = ""; }} /></label><small>Format file .json · Maksimal 10 MB</small></section>
-            </div>
-
-            <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Anggota & Manajemen Pengguna</h2><p>Daftarkan akun, tentukan workspace dan role aksesnya, serta kelola anggota yang sudah terdaftar.</p></div>{(isAppAdmin || isPlatformAdmin) && <button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceId, workspaceRole: "member" }); setShowAccountModal(true); }}>＋ Buat Akun + Atur Akses</button>}</div>
-
-            <div className="access-layout">
-              <section className="panel-card team-members">
-                <div className="section-head"><div><div className="eyebrow">WORKSPACE AKTIF</div><h3>Daftar Anggota</h3></div><span className="subtle-count">{members.length} anggota</span></div>
-                <div className="active-workspace-strip"><b>{activeWorkspace?.name ?? "Workspace"}</b><span>{activeWorkspace?.workspace_type === "team" ? "Team workspace" : "Personal workspace"}</span></div>
-                <div className="member-list">{members.map((member) => <div className="member-row" key={member.id}><div className="avatar">{initials(member.display_name)}</div><div className="member-name"><b>{member.display_name}{member.user_id === user.id ? " (Kamu)" : ""}</b><span>{member.user_id === activeWorkspace?.owner_id ? "Pemilik workspace" : member.role === "admin" ? "Pengelola workspace" : member.role === "viewer" ? "Akses baca saja" : "Anggota workspace"}</span></div>{canManage && member.role !== "owner" ? <select value={member.role} aria-label="Role anggota" onChange={async (e) => { const { error } = await supabase!.from("hw_workspace_members").update({ role: e.target.value }).eq("id", member.id); if (error) flash(messageFrom(error)); else setRefreshKey((value) => value + 1); }}><option value="admin">Admin</option><option value="member">Member</option><option value="viewer">Viewer</option></select> : <span className={member.role === "owner" ? "role-pill owner" : "role-pill"}>{member.role}</span>}</div>)}
-                  {members.length === 0 && <div className="empty-inline"><b>Belum ada anggota.</b><span>Akun yang didaftarkan dengan akses ke workspace ini akan muncul di sini.</span></div>}
-                </div>
-                <div className="workspace-invite-area">
-                  <div className="section-head"><div><div className="eyebrow">UNDANGAN WORKSPACE</div><h3>Undang pengguna yang sudah ada</h3></div></div>
-                  {canManage ? <form onSubmit={sendInvite} className="invite-form"><label>ID Pengguna<input value={inviteLoginId} onChange={(e) => setInviteLoginId(e.target.value)} placeholder="Contoh: 10001597" autoCapitalize="none" required /></label><label>Role akses<select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label><button className="primary-button full-button" disabled={busy}>Buat Undangan ↗</button></form> : <div className="permission-note">Hanya pemilik dan Admin workspace yang dapat mengundang pengguna.</div>}
-                </div>
-              </section>
-
-              <section className="panel-card invite-panel">
-                <div className="section-head"><div><div className="eyebrow">AKSES & UNDANGAN</div><h3>Undangan menunggu</h3></div><span className="subtle-count">{invites.filter((item) => !item.accepted_at).length} pending</span></div>
-                {invites.filter((item) => !item.accepted_at).length === 0 ? <div className="empty-inline"><b>Tidak ada undangan tertunda.</b><span>Undangan yang kamu kirim atau terima akan tampil di sini.</span></div> :
-                  <div className="invite-list">{invites.filter((item) => !item.accepted_at).map((invite) => { const incoming = invite.login_id?.toLowerCase() === loginId.toLowerCase() || Boolean(invite.email && invite.email.toLowerCase() === (user.email ?? "").toLowerCase()); return <div className="invite-row" key={invite.id}><div className="invite-icon">{incoming ? "↙" : "↗"}</div><div className="member-name"><b>{invite.login_id ? `ID: ${invite.login_id.toUpperCase()}` : invite.email}</b><span>{incoming ? `Diterima · ${invite.role}` : `Dikirim · ${invite.role} · Workspace ${invite.workspace_id.slice(0, 8)}`}</span></div>{incoming ? <button className="secondary-button small-button" onClick={() => acceptInvite(invite)}>Terima undangan</button> : <span className="role-pill">Menunggu</span>}</div>;})}</div>}
-              </section>
-            </div>
-
+            <div className="page-heading compact-heading"><div><div className="eyebrow">PENGATURAN WORKSPACE</div><h1>Pengaturan <em>Master Data & Pengguna</em></h1><p>Workspace hanya satu. Kelola kategori, divisi, dan akun pengguna dari sini.</p></div></div>
             {(isAppAdmin || isPlatformAdmin) && <>
-              <div className="access-section-heading account-heading"><div><div className="eyebrow">ADMINISTRASI AKUN</div><h2>Manajemen Pengguna</h2><p>Buat ID dan password, tentukan akses workspace saat pendaftaran, reset password, dan atur status akun.</p></div><span className="subtle-count">{accounts.length} akun terdaftar</span></div>
+              <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Manajemen Pengguna</h2><p>Tambah akun dan tentukan hak aksesnya sekaligus.</p></div><button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" }); setShowAccountModal(true); }}>＋ Tambah Akun / Pengguna</button></div>
               <div className="stats-grid account-stats">
                 <StatCard label="Total akun" value={accounts.length} detail="Akun terdaftar" icon="♙" />
                 <StatCard label="Akun aktif" value={accounts.filter((account) => account.is_active).length} detail="Dapat login" icon="✓" accent="green" />
-                <StatCard label="Administrator" value={accounts.filter((account) => account.account_role === "admin" || account.is_super_admin).length} detail="Pengelola aplikasi" icon="⚙" accent="orange" />
+                <StatCard label="Administrator" value={accounts.filter((account) => account.account_role === "admin" || account.is_super_admin).length} detail="Admin aplikasi" icon="⚙" accent="orange" />
                 <StatCard label="Nonaktif" value={accounts.filter((account) => !account.is_active).length} detail="Akses login diblokir" icon="!" accent="red" />
               </div>
               <section className="panel-card table-card account-table-card">
                 <div className="section-head account-table-head"><div><div className="eyebrow">USER DIRECTORY</div><h3>Daftar akun pengguna</h3></div><span className="subtle-count">{accounts.length} akun</span></div>
-                {accounts.length === 0 ? <EmptyState title="Belum ada akun tambahan." detail="Buat akun dan tentukan workspace yang dapat diakses pada form pendaftaran." action="＋ Buat akun" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceId, workspaceRole: "member" }); setShowAccountModal(true); }} /> :
-                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>Role Aplikasi</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
+                {accounts.length === 0 ? <EmptyState title="Belum ada akun tambahan." detail="Tambahkan pengguna pertama ke workspace utama." action="＋ Tambah Pengguna" onClick={() => setShowAccountModal(true)} /> :
+                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>Role Aplikasi</th><th>Akses Workspace</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
                     {accounts.map((account) => <tr key={account.user_id}>
                       <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin aplikasi" : "User"}</span></div></div></td>
                       <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
                       <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : isPlatformAdmin ? <select className="status-select" value={account.account_role} onChange={(e) => updateAccountRole(account, e.target.value)}><option value="user">User</option><option value="admin">Admin</option></select> : <span className="role-pill">{account.account_role}</span>}</td>
+                      <td><span className="role-pill">{account.workspace_role || "Belum diberi akses"}</span></td>
                       <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
                       <td className="date-cell">{dateLabel(account.created_at.slice(0, 10))}</td>
                       <td><div className="account-actions">{!account.is_super_admin && <><button className="icon-button" title="Ubah nama" onClick={() => renameAccount(account)}>✎</button><button className="icon-button" title="Reset password" onClick={() => resetAccountPassword(account)}>↻</button><button className={account.is_active ? "icon-button danger-hover" : "icon-button"} title={account.is_active ? "Nonaktifkan akun" : "Aktifkan akun"} onClick={() => changeAccountStatus(account)}>{account.is_active ? "⊘" : "✓"}</button></>}</div></td>
                     </tr>)}
                   </tbody></table></div>}
               </section>
-              <p className="account-access-note">Akun Admin aplikasi hanya dapat dibuat dan diubah oleh Super Admin. Role workspace (Admin, Member, Viewer) ditentukan tersendiri saat pendaftaran.</p>
             </>}
-            <section className="panel-card settings-note"><b>Informasi penyimpanan</b><p>HUB WORKSPACE menggunakan Supabase Cloud untuk menyimpan data dan mengatur hak akses. Backup JSON adalah salinan tambahan yang dapat kamu simpan berkala.</p><span><i /> Koneksi database aktif</span></section>
+            {canManage && <div className="master-data-grid">
+              <section className="panel-card master-data-card">
+                <div className="section-head"><div><div className="eyebrow">MASTER DATA</div><h3>Kategori Task</h3><p>Kategori tampil di form input dan dashboard.</p></div><span className="subtle-count">{categories.length} kategori</span></div>
+                <form className="master-data-form" onSubmit={saveCategory}>
+                  <label>Nama Kategori<input value={categoryForm.name} onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })} placeholder="Contoh: Audit / Monitoring" required /></label>
+                  <label>Warna<input type="color" value={categoryForm.color} onChange={(e) => setCategoryForm({ ...categoryForm, color: e.target.value })} /></label>
+                  <div><button className="primary-button">{editingCategoryId ? "Simpan Perubahan" : "＋ Tambah Kategori"}</button>{editingCategoryId && <button type="button" className="secondary-button" onClick={() => { setEditingCategoryId(null); setCategoryForm({ name: "", color: "#16836A" }); }}>Batal</button>}</div>
+                </form>
+                <div className="master-data-list">{categories.map((category) => <div className="master-data-row" key={category.id}><span className="master-color-dot" style={{ background: category.color }} /><b>{category.name}</b><small>{tasks.filter((task) => task.category === category.name).length} task</small><button className="icon-button" title="Edit kategori" onClick={() => { setEditingCategoryId(category.id); setCategoryForm({ name: category.name, color: category.color }); }}>✎</button><button className="icon-button danger-hover" title="Hapus kategori" onClick={() => removeCategory(category)}>×</button></div>)}</div>
+              </section>
+              <section className="panel-card master-data-card">
+                <div className="section-head"><div><div className="eyebrow">MASTER DATA</div><h3>Divisi</h3><p>Satu task bisa ditautkan ke beberapa divisi sekaligus.</p></div><span className="subtle-count">{divisions.length} divisi</span></div>
+                <form className="master-data-form" onSubmit={saveDivision}>
+                  <label>Nama Divisi<input value={divisionForm.name} onChange={(e) => setDivisionForm({ ...divisionForm, name: e.target.value })} placeholder="Contoh: Transport / Line Haul" required /></label>
+                  <label>Warna<input type="color" value={divisionForm.color} onChange={(e) => setDivisionForm({ ...divisionForm, color: e.target.value })} /></label>
+                  <div><button className="primary-button">{editingDivisionId ? "Simpan Perubahan" : "＋ Tambah Divisi"}</button>{editingDivisionId && <button type="button" className="secondary-button" onClick={() => { setEditingDivisionId(null); setDivisionForm({ name: "", color: "#4386AE" }); }}>Batal</button>}</div>
+                </form>
+                <div className="master-data-list">{divisions.map((division) => <div className="master-data-row" key={division.id}><span className="master-color-dot" style={{ background: division.color }} /><b>{division.name}</b><small>{tasks.filter((task) => (task.division_ids ?? []).includes(division.id)).length} task</small><button className="icon-button" title="Edit divisi" onClick={() => { setEditingDivisionId(division.id); setDivisionForm({ name: division.name, color: division.color }); }}>✎</button><button className="icon-button danger-hover" title="Hapus divisi" onClick={() => removeDivision(division)}>×</button></div>)}</div>
+              </section>
+            </div>}
+            <div className="settings-grid settings-bottom-grid">
+              <section className="panel-card settings-card"><div className="settings-icon">⇩</div><div className="eyebrow">DATA & KEAMANAN</div><h3>Backup Workspace</h3><p>Unduh salinan tugas, catatan, dan agenda dari satu workspace utama.</p><button className="primary-button" onClick={downloadBackup}>Unduh Backup JSON ↗</button><small>Data workspace saat ini saja.</small></section>
+              <section className="panel-card settings-card"><div className="settings-icon">↥</div><div className="eyebrow">PEMULIHAN DATA</div><h3>Restore dari Backup</h3><p>Pulihkan data dari file backup HUB WORKSPACE. Data yang ada tidak dihapus.</p><label className="restore-file-button">Pilih File Backup<input type="file" accept="application/json,.json" onChange={(e) => { const file = e.target.files?.[0]; if (file) void restoreBackup(file); e.currentTarget.value = ""; }} /></label><small>Format .json · Maksimal 10 MB</small></section>
+            </div>
+            <section className="panel-card settings-note"><b>Informasi penyimpanan</b><p>Semua pengguna mengakses satu workspace bersama. Hak edit dan baca diatur berdasarkan role masing-masing.</p><span><i /> Koneksi database aktif</span></section>
           </>}
  
           {busy && <div className="loading-strip"><i /> Syncing workspace data</div>}
@@ -923,8 +918,9 @@ export default function Home() {
           <div className="task-entry-grid">
             <label>Tanggal Rencana<input type="date" value={taskForm.start_date} onChange={(e) => setTaskForm({ ...taskForm, start_date: e.target.value })} required /></label>
             <label>Deadline<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label>
-            <label>Kategori<select value={taskForm.category} onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}>{taskCategoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
+            <label>Kategori<select value={taskForm.category} onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}>{categories.map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}</select></label>
             <label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Rendah</option><option value="medium">Medium</option><option value="high">Tinggi</option><option value="urgent">Urgent</option></select></label>
+            <div className="task-division-picker task-field-wide-four"><span>Divisi <small>(bisa pilih lebih dari satu)</small></span><div>{divisions.map((division) => <label key={division.id} className={taskForm.division_ids.includes(division.id) ? "division-option selected" : "division-option"}><input type="checkbox" checked={taskForm.division_ids.includes(division.id)} onChange={(e) => setTaskForm({ ...taskForm, division_ids: e.target.checked ? [...taskForm.division_ids, division.id] : taskForm.division_ids.filter((id) => id !== division.id) })} /><i style={{ background: division.color }} />{division.name}</label>)}{divisions.length === 0 && <small>Tambahkan master divisi melalui Pengaturan.</small>}</div></div>
             <label className="task-field-wide-three">Rencana / Kegiatan<textarea autoFocus rows={3} value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Contoh: Membuat laporan mingguan, follow up data supplier, menyiapkan materi meeting…" required /></label>
             <label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">Belum Mulai</option><option value="in_progress">Sedang Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
             <label>Progress (%)<input type="number" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} /></label>
@@ -939,8 +935,6 @@ export default function Home() {
 
       {showEventModal && <Modal title="Add an event" subtitle="Put an important moment on the shared calendar." onClose={() => setShowEventModal(false)}><form className="modal-form" onSubmit={createEvent}><label>Event title<input autoFocus value={eventForm.title} onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Team sync, project deadline…" required /></label><label>Description<textarea rows={2} value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} placeholder="What should everyone know?" /></label><label>Location<input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} placeholder="Meeting room or online link" /></label><div className="form-two"><label>Starts at<input type="datetime-local" value={eventForm.starts_at} onChange={(e) => setEventForm({ ...eventForm, starts_at: e.target.value })} required /></label><label>Ends at<input type="datetime-local" value={eventForm.ends_at} onChange={(e) => setEventForm({ ...eventForm, ends_at: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowEventModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Add event ↗</button></div></form></Modal>}
 
-      {showWorkspaceModal && <Modal title="Create a workspace" subtitle="Keep personal focus separate from shared team work." onClose={() => setShowWorkspaceModal(false)}><form className="modal-form" onSubmit={createWorkspace}><label>Workspace name<input autoFocus value={workspaceForm.name} onChange={(e) => setWorkspaceForm({ ...workspaceForm, name: e.target.value })} placeholder="e.g. Operations team" required /></label><label>Workspace type<select value={workspaceForm.workspace_type} onChange={(e) => setWorkspaceForm({ ...workspaceForm, workspace_type: e.target.value as "personal" | "team" })}><option value="personal">Personal — just for me</option><option value="team">Team — collaborate with others</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowWorkspaceModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Create workspace ↗</button></div></form></Modal>}
-
       {showAccountModal && <Modal title="Buat Akun & Atur Akses" subtitle="Akun langsung ditambahkan ke workspace yang dipilih setelah disimpan." onClose={() => setShowAccountModal(false)}>
         <form className="modal-form account-entry-form" onSubmit={createAccount}>
           <div className="form-two">
@@ -949,12 +943,12 @@ export default function Home() {
           </div>
           <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
           <div className="form-two">
-            <label>Workspace yang diberikan<select value={accountForm.workspaceId} onChange={(e) => setAccountForm({ ...accountForm, workspaceId: e.target.value })} required><option value="">Pilih workspace</option>{workspaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
-            <label>Role akses workspace<select value={accountForm.workspaceRole} onChange={(e) => setAccountForm({ ...accountForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola anggota & tugas</option><option value="viewer">Viewer — lihat saja</option></select></label>
+            <label>Workspace tujuan<input value="HUB WORKSPACE" readOnly /></label>
+            <label>Role akses<select value={accountForm.workspaceRole} onChange={(e) => setAccountForm({ ...accountForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label>
           </div>
           {isPlatformAdmin && <label>Role aplikasi<select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
-          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>{workspaces.find((space) => space.id === accountForm.workspaceId)?.name || "Belum memilih workspace"} · {accountForm.workspaceRole}</span><small>Pengguna dapat langsung melihat workspace ini setelah login menggunakan ID dan password.</small></div>
-          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy || !workspaces.length || !accountForm.workspaceId}>Simpan Akun & Akses ↗</button></div>
+          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>HUB WORKSPACE · {accountForm.workspaceRole}</span><small>Pengguna dapat langsung melihat workspace ini setelah login menggunakan ID dan password.</small></div>
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy}>Simpan Akun & Akses ↗</button></div>
         </form>
       </Modal>}
 
