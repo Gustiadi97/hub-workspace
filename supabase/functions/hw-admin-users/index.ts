@@ -202,6 +202,121 @@ Deno.serve(async (req) => {
       .select("user_id").eq("user_id", targetUserId).maybeSingle();
     if (targetSuperAdmin) return json({ error: "Akun Super Admin dilindungi dan tidak dapat diubah dari menu ini." }, 403);
 
+    if (action === "update-account") {
+      const fullName = String(body.fullName || "").trim();
+      const workspaceRole = String(body.workspaceRole || "");
+      const requestedAppRole = body.accountRole === undefined ? targetAccount.account_role : String(body.accountRole);
+      const password = String(body.password || "");
+
+      if (fullName.length < 2 || fullName.length > 100) {
+        return json({ error: "Nama pengguna harus 2–100 karakter." }, 400);
+      }
+      if (!["admin", "member", "viewer"].includes(workspaceRole)) {
+        return json({ error: "Role akses workspace tidak valid." }, 400);
+      }
+      if (!["admin", "user"].includes(requestedAppRole)) {
+        return json({ error: "Role aplikasi tidak valid." }, 400);
+      }
+      if (!isSuperAdmin && requestedAppRole !== targetAccount.account_role) {
+        return json({ error: "Hanya Super Admin yang dapat mengubah role aplikasi." }, 403);
+      }
+      if (password && (password.length < 8 || password.length > 128)) {
+        return json({ error: "Password baru harus 8–128 karakter." }, 400);
+      }
+
+      const { data: mainWorkspace, error: mainWorkspaceError } = await adminClient
+        .from("hw_workspaces").select("id,owner_id").order("created_at", { ascending: true }).limit(1).maybeSingle();
+      if (mainWorkspaceError || !mainWorkspace) {
+        return json({ error: "Workspace utama tidak ditemukan." }, 404);
+      }
+      if (!isSuperAdmin && mainWorkspace.owner_id !== callerId) {
+        const { data: callerMembership } = await adminClient.from("hw_workspace_members")
+          .select("role").eq("workspace_id", mainWorkspace.id).eq("user_id", callerId).maybeSingle();
+        if (!callerMembership || !["owner", "admin"].includes(callerMembership.role)) {
+          return json({ error: "Kamu tidak memiliki izin mengatur akses pengguna." }, 403);
+        }
+      }
+
+      const now = new Date().toISOString();
+      const { error: accountUpdateError } = await adminClient.from("hw_user_accounts")
+        .update({ display_name: fullName, account_role: requestedAppRole, updated_at: now })
+        .eq("user_id", targetUserId);
+      if (accountUpdateError) return json({ error: accountUpdateError.message }, 400);
+
+      const { error: profileUpdateError } = await adminClient.from("hw_user_profiles")
+        .upsert({ user_id: targetUserId, display_name: fullName, updated_at: now }, { onConflict: "user_id" });
+      if (profileUpdateError) return json({ error: profileUpdateError.message }, 400);
+
+      const { data: existingMembership, error: membershipReadError } = await adminClient.from("hw_workspace_members")
+        .select("id").eq("workspace_id", mainWorkspace.id).eq("user_id", targetUserId).maybeSingle();
+      if (membershipReadError) return json({ error: membershipReadError.message }, 400);
+
+      const membershipResult = existingMembership
+        ? await adminClient.from("hw_workspace_members").update({ role: workspaceRole }).eq("id", existingMembership.id)
+        : await adminClient.from("hw_workspace_members").insert({ workspace_id: mainWorkspace.id, user_id: targetUserId, role: workspaceRole });
+      if (membershipResult.error) return json({ error: membershipResult.error.message }, 400);
+
+      const authChanges: Record<string, unknown> = {
+        user_metadata: { ...(targetAccount ? {} : {}), full_name: fullName, login_id: targetAccount.login_id, auth_mode: "username" },
+      };
+      if (password) authChanges.password = password;
+      const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(targetUserId, authChanges);
+      if (authUpdateError) return json({ error: authUpdateError.message }, 400);
+
+      return json({ ok: true, displayName: fullName, workspaceRole, accountRole: requestedAppRole, passwordChanged: Boolean(password) });
+    }
+
+    if (action === "delete-account") {
+      const { data: ownedWorkspace, error: ownerCheckError } = await adminClient
+        .from("hw_workspaces").select("id").eq("owner_id", targetUserId).limit(1).maybeSingle();
+      if (ownerCheckError) return json({ error: ownerCheckError.message }, 400);
+      if (ownedWorkspace) return json({ error: "Akun ini merupakan pemilik workspace dan tidak dapat dihapus sebelum kepemilikan workspace dialihkan." }, 409);
+
+      const wctChecks = await Promise.all([
+        adminClient.from("wct_actions").select("id", { count: "exact", head: true }).eq("created_by", targetUserId),
+        adminClient.from("wct_actions").select("id", { count: "exact", head: true }).eq("updated_by", targetUserId),
+        adminClient.from("wct_app_settings").select("id", { count: "exact", head: true }).eq("updated_by", targetUserId),
+        adminClient.from("wct_cases").select("id", { count: "exact", head: true }).eq("created_by", targetUserId),
+        adminClient.from("wct_cases").select("id", { count: "exact", head: true }).eq("updated_by", targetUserId),
+        adminClient.from("wct_cases").select("id", { count: "exact", head: true }).eq("closed_by", targetUserId),
+        adminClient.from("wct_meetings").select("id", { count: "exact", head: true }).eq("created_by", targetUserId),
+        adminClient.from("wct_progress_log_edits").select("id", { count: "exact", head: true }).eq("edited_by", targetUserId),
+        adminClient.from("wct_progress_logs").select("id", { count: "exact", head: true }).eq("created_by", targetUserId),
+        adminClient.from("wct_progress_logs").select("id", { count: "exact", head: true }).eq("edited_by", targetUserId),
+        adminClient.from("wct_users").select("id", { count: "exact", head: true }).eq("id", targetUserId),
+        adminClient.from("wct_users").select("id", { count: "exact", head: true }).eq("created_by", targetUserId),
+      ]);
+      if (wctChecks.some((result) => result.error)) {
+        return json({ error: "Tidak dapat memeriksa keterkaitan akun dengan Weekly Case Tracker. Akun tidak dihapus." }, 500);
+      }
+      const hasOtherAppHistory = wctChecks.some((result) => (result.count ?? 0) > 0);
+
+      const inviteByCleanup = await adminClient.from("hw_workspace_invites").delete().eq("invited_by", targetUserId);
+      if (inviteByCleanup.error) return json({ error: inviteByCleanup.error.message }, 400);
+      const inviteTargetCleanup = await adminClient.from("hw_workspace_invites").delete().eq("login_id", targetAccount.login_id);
+      if (inviteTargetCleanup.error) return json({ error: inviteTargetCleanup.error.message }, 400);
+
+      if (hasOtherAppHistory) {
+        const memberCleanup = await adminClient.from("hw_workspace_members").delete().eq("user_id", targetUserId);
+        if (memberCleanup.error) return json({ error: memberCleanup.error.message }, 400);
+        const profileCleanup = await adminClient.from("hw_user_profiles").delete().eq("user_id", targetUserId);
+        if (profileCleanup.error) return json({ error: profileCleanup.error.message }, 400);
+        const accountCleanup = await adminClient.from("hw_user_accounts").delete().eq("user_id", targetUserId);
+        if (accountCleanup.error) return json({ error: accountCleanup.error.message }, 400);
+        return json({
+          ok: true,
+          authIdentityRetained: true,
+          message: "Akun berhasil dihapus dari HUB WORKSPACE. Identitas login dipertahankan karena masih dipakai oleh Weekly Case Tracker.",
+        });
+      }
+
+      const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(targetUserId);
+      if (authDeleteError) {
+        return json({ error: "Gagal menghapus identitas login: " + authDeleteError.message }, 400);
+      }
+      return json({ ok: true, authIdentityRetained: false, message: "Akun dan identitas login berhasil dihapus." });
+    }
+
     if (action === "set-active") {
       const active = body.active;
       if (typeof active !== "boolean") return json({ error: "Status akun tidak valid." }, 400);
