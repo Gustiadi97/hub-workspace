@@ -585,7 +585,9 @@ export default function Home() {
         status: (["todo","in_progress","waiting","done","cancelled"].includes(item.status) ? item.status : "todo"),
         priority: (["low","medium","high","urgent"].includes(item.priority) ? item.priority : "medium"),
         progress: Math.max(0, Math.min(100, Number(item.progress) || 0)),
+        start_date: item.start_date || null,
         due_date: item.due_date || null,
+        category: typeof item.category === "string" && item.category.trim() ? item.category : "Pekerjaan Umum",
         assigned_to: item.assigned_to && members.some((member) => member.user_id === item.assigned_to) ? item.assigned_to : null,
       }));
       const noteRows = backupNotes.filter((item) => item && typeof item.content === "string").map((item) => ({
@@ -782,7 +784,7 @@ export default function Home() {
               {visibleTasks.length === 0 ? <EmptyState title="Belum ada tugas pada filter ini." detail="Tambahkan pekerjaan atau ubah filter pencarian." action="＋ Input Task" onClick={() => openTaskEditor()} /> :
                 <div className="task-table-wrap"><table className="task-table office-task-table"><thead><tr><th>Tanggal</th><th>Deadline</th><th>Kategori</th><th>Tugas</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
                   {visibleTasks.map((task) => <tr key={task.id}>
-                    <td className="date-cell">{dateLabel(task.created_at.slice(0,10))}</td>
+                    <td className="date-cell">{dateLabel(task.start_date || task.created_at.slice(0,10))}</td>
                     <td className="date-cell">{dateLabel(task.due_date)}</td>
                     <td><span className="category-tag">{taskCategory(task)}</span></td>
                     <td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "Tidak ada keterangan"}</span></div></td>
@@ -915,8 +917,6 @@ export default function Home() {
       </main>
 
       <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.id === "overview" ? "Home" : item.id === "tasks" ? "Tugas" : item.id === "calendar" ? "Kalender" : item.id === "board" ? "Kanban" : item.id === "notes" ? "Catatan" : "Akses"}</small></button>)}</nav>
-
-      {showTaskModal && <Modal title={editingTaskId ? "Edit task" : "Create a task"} subtitle="Keep the owner, timing, and next action clear." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Person in charge<select value={taskForm.assigned_to} onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</option>)}</select></label><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label></div><div className="form-two"><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label><label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></label></div><label>Progress <span className="form-hint">{taskForm.progress}% complete</span><input type="range" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Number(e.target.value) })} /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowTaskModal(false); setEditingTaskId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingTaskId ? "Save changes ↗" : "Create task ↗"}</button></div></form></Modal>}
 
       {showTaskModal && <Modal className="task-modal" title={editingTaskId ? "Edit Task" : "Input Task"} subtitle="Lengkapi detail agar tugas mudah dipantau dan ditindaklanjuti." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}>
         <form className="task-entry-form" onSubmit={createTask}>
