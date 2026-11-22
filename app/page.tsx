@@ -83,6 +83,7 @@ export default function Home() {
   const [taskQuery, setTaskQuery] = useState("");
   const [taskFilter, setTaskFilter] = useState("all");
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
@@ -97,7 +98,7 @@ export default function Home() {
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
-  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", due_date: "" });
+  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", due_date: "", assigned_to: "", status: "todo", progress: 0 });
   const [noteForm, setNoteForm] = useState({ title: "", content: "" });
   const [eventForm, setEventForm] = useState({ title: "", description: "", location: "", starts_at: "", ends_at: "" });
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", workspace_type: "team" as "personal" | "team" });
@@ -274,21 +275,43 @@ export default function Home() {
     } finally { setBusy(false); }
   };
 
+  const openTaskEditor = (task?: Task) => {
+    setEditingTaskId(task?.id ?? null);
+    setTaskForm(task ? {
+      title: task.title,
+      description: task.description ?? "",
+      priority: task.priority,
+      due_date: task.due_date ?? "",
+      assigned_to: task.assigned_to ?? "",
+      status: task.status,
+      progress: task.progress ?? 0,
+    } : { title: "", description: "", priority: "medium", due_date: "", assigned_to: user?.id ?? "", status: "todo", progress: 0 });
+    setShowTaskModal(true);
+  };
+
   const createTask = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase || !user || !activeWorkspace) return;
     setBusy(true);
     try {
-      const { error } = await supabase.from("hw_tasks").insert({
-        workspace_id: activeWorkspace.id, created_by: user.id, title: taskForm.title.trim(),
-        description: taskForm.description.trim(), priority: taskForm.priority,
-        due_date: taskForm.due_date || null, status: "todo", progress: 0,
-      });
+      const payload = {
+        title: taskForm.title.trim(),
+        description: taskForm.description.trim(),
+        priority: taskForm.priority,
+        due_date: taskForm.due_date || null,
+        assigned_to: taskForm.assigned_to || null,
+        status: taskForm.status,
+        progress: taskForm.status === "done" ? 100 : Math.max(0, Math.min(100, Number(taskForm.progress) || 0)),
+      };
+      const { error } = editingTaskId
+        ? await supabase.from("hw_tasks").update(payload).eq("id", editingTaskId)
+        : await supabase.from("hw_tasks").insert({ workspace_id: activeWorkspace.id, created_by: user.id, ...payload });
       if (error) throw error;
       setShowTaskModal(false);
-      setTaskForm({ title: "", description: "", priority: "medium", due_date: "" });
+      setEditingTaskId(null);
+      setTaskForm({ title: "", description: "", priority: "medium", due_date: "", assigned_to: user.id, status: "todo", progress: 0 });
       setRefreshKey((value) => value + 1);
-      flash("Task added.");
+      flash(editingTaskId ? "Task updated." : "Task added.");
     } catch (error) { flash(messageFrom(error)); }
     finally { setBusy(false); }
   };
@@ -509,7 +532,7 @@ export default function Home() {
           {activeView === "overview" && <>
             <div className="page-heading">
               <div><div className="eyebrow">YOUR OVERVIEW</div><h1>Good work starts<br className="mobile-break" /> with <em>clarity.</em></h1><p>Here’s what’s happening in {activeWorkspace?.name ?? "your workspace"}.</p></div>
-              <div className="heading-actions"><button className="secondary-button" onClick={() => setShowEventModal(true)}>＋ Add event</button><button className="primary-button" onClick={() => setShowTaskModal(true)}>＋ New task</button></div>
+              <div className="heading-actions"><button className="secondary-button" onClick={() => setShowEventModal(true)}>＋ Add event</button><button className="primary-button" onClick={() => openTaskEditor()}>＋ New task</button></div>
             </div>
             <div className="stats-grid">
               <StatCard label="Total tasks" value={tasks.length} detail="Across this workspace" icon="☷" />
@@ -532,7 +555,7 @@ export default function Home() {
               </section>
               <section className="panel-card task-preview wide-panel">
                 <div className="section-head"><div><div className="eyebrow">YOUR PRIORITIES</div><h3>Tasks to move forward</h3></div><button className="text-button" onClick={() => setActiveView("tasks")}>All tasks ↗</button></div>
-                {tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").slice(0, 5).length === 0 ? <EmptyInline title="A clean slate." detail="Add a task to give your next idea a place to go." action="＋ Create task" onClick={() => setShowTaskModal(true)} /> :
+                {tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").slice(0, 5).length === 0 ? <EmptyInline title="A clean slate." detail="Add a task to give your next idea a place to go." action="＋ Create task" onClick={() => openTaskEditor()} /> :
                   <div className="task-rows">{tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").slice(0, 5).map((task) => <TaskRow key={task.id} task={task} onStatus={(status) => changeTask(task.id, { status, progress: status === "done" ? 100 : task.progress })} />)}</div>}
               </section>
               <section className="panel-card notes-preview">
@@ -543,28 +566,28 @@ export default function Home() {
           </>}
 
           {activeView === "tasks" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">GET IT DONE</div><h1>Your <em>tasks.</em></h1><p>Keep priorities clear and progress moving.</p></div><button className="primary-button" onClick={() => setShowTaskModal(true)}>＋ New task</button></div>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">GET IT DONE</div><h1>Your <em>tasks.</em></h1><p>Keep priorities clear and progress moving.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ New task</button></div>
             <div className="toolbar"><div className="search-box"><span>⌕</span><input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="Search tasks…" /></div><select value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)}><option value="all">All statuses</option><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select><button className="secondary-button" onClick={() => setActiveView("board")}>▥ Board view</button></div>
             <section className="panel-card table-card">
-              {visibleTasks.length === 0 ? <EmptyState title="No tasks match this view." detail="Try another filter or create a new task." action="＋ New task" onClick={() => setShowTaskModal(true)} /> :
-                <div className="task-table-wrap"><table className="task-table"><thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Due date</th><th>Progress</th><th /></tr></thead><tbody>
-                  {visibleTasks.map((task) => <tr key={task.id}><td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "No description"}</span></div></td><td><select className="status-select" value={task.status} onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></td><td><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span></td><td className="date-cell">{dateLabel(task.due_date)}</td><td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td><td><button className="icon-button danger-hover" title="Delete task" onClick={() => deleteTask(task.id)}>×</button></td></tr>)}
+              {visibleTasks.length === 0 ? <EmptyState title="No tasks match this view." detail="Try another filter or create a new task." action="＋ New task" onClick={() => openTaskEditor()} /> :
+                <div className="task-table-wrap"><table className="task-table"><thead><tr><th>Task</th><th>PIC</th><th>Status</th><th>Priority</th><th>Due date</th><th>Progress</th><th /></tr></thead><tbody>
+                  {visibleTasks.map((task) => <tr key={task.id}><td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "No description"}</span></div></td><td><select className="status-select assignee-select" value={task.assigned_to ?? ""} onChange={(e) => changeTask(task.id, { assigned_to: e.target.value || null })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}</option>)}</select></td><td><select className="status-select" value={task.status} onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></td><td><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span></td><td className="date-cell">{dateLabel(task.due_date)}</td><td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td><td><div className="row-actions"><button className="icon-button" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button danger-hover" title="Delete task" onClick={() => deleteTask(task.id)}>×</button></div></td></tr>)}
                 </tbody></table></div>}
             </section>
           </>}
 
           {activeView === "board" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">VISUAL WORKFLOW</div><h1>Kanban <em>board.</em></h1><p>Move a task between columns as work changes.</p></div><button className="primary-button" onClick={() => setShowTaskModal(true)}>＋ New task</button></div>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">VISUAL WORKFLOW</div><h1>Kanban <em>board.</em></h1><p>Move a task between columns as work changes.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ New task</button></div>
             <div className="board-scroll"><div className="kanban-grid">
               {(["todo", "in_progress", "waiting", "done"] as const).map((status) => {
                 const columnTasks = tasks.filter((task) => task.status === status);
                 return <section className="kanban-column" key={status} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (draggedTask) { void changeTask(draggedTask, { status, progress: status === "done" ? 100 : (tasks.find((task) => task.id === draggedTask)?.progress ?? 0) }); setDraggedTask(null); } }}>
                   <div className="kanban-head"><span className={`status-dot ${statusMeta[status].tone}`} /><b>{statusMeta[status].label}</b><small>{columnTasks.length}</small></div>
                   {columnTasks.map((task) => <article className="kanban-card" key={task.id} draggable onDragStart={() => setDraggedTask(task.id)} onDragEnd={() => setDraggedTask(null)}>
-                    <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><button className="icon-button tiny" onClick={() => deleteTask(task.id)}>×</button></div>
+                    <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Delete task" onClick={() => deleteTask(task.id)}>×</button></div></div>
                     <h4>{task.title}</h4><p>{task.description || "No description added."}</p>
                     <div className="kanban-progress"><span><i style={{ width: `${task.progress}%` }} /></span><small>{task.progress}%</small></div>
-                    <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><select value={task.status} aria-label="Change task status" onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option></select></div>
+                    <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><span className="kanban-assignee">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? "Unassigned"}</span><select value={task.status} aria-label="Change task status" onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option></select></div>
                   </article>)}
                   {columnTasks.length === 0 && <div className="kanban-empty">Drop a task here</div>}
                 </section>;
@@ -612,7 +635,7 @@ export default function Home() {
 
       <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.label.replace("My ", "")}</small></button>)}</nav>
 
-      {showTaskModal && <Modal title="Create a task" subtitle="Give the next action a clear owner and direction." onClose={() => setShowTaskModal(false)}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowTaskModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Create task ↗</button></div></form></Modal>}
+      {showTaskModal && <Modal title={editingTaskId ? "Edit task" : "Create a task"} subtitle="Keep the owner, timing, and next action clear." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Person in charge<select value={taskForm.assigned_to} onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</option>)}</select></label><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label></div><div className="form-two"><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label><label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></label></div><label>Progress <span className="form-hint">{taskForm.progress}% complete</span><input type="range" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Number(e.target.value) })} /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowTaskModal(false); setEditingTaskId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingTaskId ? "Save changes ↗" : "Create task ↗"}</button></div></form></Modal>}
 
       {showNoteModal && <Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
 
