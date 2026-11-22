@@ -157,6 +157,8 @@ export default function Home() {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [divisionForm, setDivisionForm] = useState({ name: "", color: "#4386AE" });
   const [editingDivisionId, setEditingDivisionId] = useState<string | null>(null);
+  const [hubForm, setHubForm] = useState({ hub_code: "", hub_name: "", color: "#24785F" });
+  const [editingHubCode, setEditingHubCode] = useState<string | null>(null);
 
   const activeWorkspace = workspaces.find((item) => item.id === workspaceId) ?? null;
   const canManage = workspaceRole === "owner" || workspaceRole === "admin";
@@ -177,6 +179,7 @@ export default function Home() {
     });
   const avgProgress = tasks.length ? Math.round(tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0) / tasks.length) : 0;
   const completion = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
+  const unreadNotificationCount = notifications.filter((item) => !item.read_at).length;
   const categoryRows = useMemo(() => categories.map((category) => ({
     label: category.name, count: tasks.filter((task) => task.category === category.name).length,
   })), [tasks, categories]);
@@ -372,6 +375,41 @@ export default function Home() {
   }, [supabase, user, workspaceId, isAppAdmin, isPlatformAdmin, refreshKey, flash]);
 
   useEffect(() => {
+    if (!supabase || !user) return;
+    let mounted = true;
+    const loadNotifications = async () => {
+      const { data, error } = await supabase.from("hw_notifications")
+        .select("id,user_id,workspace_id,task_id,kind,title,body,created_at,read_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (!mounted) return;
+      if (error) {
+        flash(messageFrom(error), "error");
+        return;
+      }
+      setNotifications((data ?? []) as AppNotification[]);
+    };
+    void loadNotifications();
+    const channel = supabase.channel(`user-notifications-${user.id}`)
+      .on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "hw_notifications",
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        const next = payload.new as AppNotification;
+        setNotifications((current) => current.some((item) => item.id === next.id) ? current : [next, ...current].slice(0, 50));
+        flash(`${next.title}: ${next.body}`, "notification");
+      })
+      .subscribe();
+    return () => {
+      mounted = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, user?.id, flash]);
+
+  useEffect(() => {
     if (!supabase || !activeUpdateTask) return;
     let mounted = true;
     const loadTaskUpdates = async () => {
@@ -466,6 +504,31 @@ export default function Home() {
     setTaskUpdateStatus(task.status);
     setTaskUpdateProgress(task.progress ?? 0);
     setTaskUpdateRows([]);
+  };
+
+  const markNotificationRead = async (item: AppNotification) => {
+    if (!supabase) return;
+    if (item.read_at) return;
+    const readAt = new Date().toISOString();
+    const { error } = await supabase.from("hw_notifications").update({ read_at: readAt }).eq("id", item.id);
+    if (error) {
+      flash(messageFrom(error), "error");
+      return;
+    }
+    setNotifications((current) => current.map((row) => row.id === item.id ? { ...row, read_at: readAt } : row));
+  };
+
+  const openNotification = async (item: AppNotification) => {
+    await markNotificationRead(item);
+    setNotificationsOpen(false);
+    const task = tasks.find((row) => row.id === item.task_id);
+    if (task) {
+      setActiveView("tasks");
+      openTaskUpdates(task);
+    } else {
+      setActiveView("tasks");
+      flash("Tugas dari notifikasi tidak lagi tersedia.", "info");
+    }
   };
 
   const createTask = async (event: FormEvent<HTMLFormElement>) => {
@@ -632,8 +695,8 @@ export default function Home() {
       flash("Nama tampilan harus 2–100 karakter.");
       return;
     }
-    if (fullName === profileName) {
-      flash("Nama tampilan belum berubah.");
+    if (fullName === profileName && myHubCodeDraft === myHubCode) {
+      flash("Tidak ada perubahan pada profil.", "info");
       return;
     }
     setSavingProfileName(true);
@@ -645,7 +708,7 @@ export default function Home() {
       setMyHubCode(myHubCodeDraft);
       setRefreshKey((value) => value + 1);
       setTaskUpdateRefresh((value) => value + 1);
-      flash("Nama tampilan berhasil diperbarui.");
+      flash("Profil pengguna berhasil diperbarui.");
     } catch (error) {
       flash(messageFrom(error));
     } finally {
@@ -794,6 +857,45 @@ export default function Home() {
     const { error } = await supabase.from("hw_divisions").delete().eq("id", division.id).eq("workspace_id", workspaceId);
     if (error) flash(messageFrom(error));
     else { setRefreshKey((value) => value + 1); flash("Divisi dihapus."); }
+  };
+
+  const saveHub = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase || !canManage || !user) return;
+    const hubCode = hubForm.hub_code.trim().toUpperCase();
+    const hubName = hubForm.hub_name.trim();
+    if (!hubCode || !hubName) return;
+    if (!/^[A-Z0-9_-]{2,12}$/.test(hubCode)) {
+      flash("Kode HUB harus 2–12 karakter dan hanya boleh berisi huruf, angka, strip, atau underscore.", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = editingHubCode
+        ? await supabase.from("hw_hubs").update({ hub_name: hubName, color: hubForm.color, updated_at: new Date().toISOString() }).eq("hub_code", editingHubCode)
+        : await supabase.from("hw_hubs").insert({ hub_code: hubCode, hub_name: hubName, color: hubForm.color, created_by: user.id });
+      if (result.error) throw result.error;
+      setHubForm({ hub_code: "", hub_name: "", color: "#24785F" });
+      setEditingHubCode(null);
+      setRefreshKey((value) => value + 1);
+      flash(editingHubCode ? "Nama HUB berhasil diperbarui." : "HUB berhasil ditambahkan.");
+    } catch (error) { flash(messageFrom(error), "error"); }
+    finally { setBusy(false); }
+  };
+
+  const removeHub = async (hub: Hub) => {
+    if (!supabase) return;
+    const usedByAccount = accounts.some((account) => account.hub_code === hub.hub_code);
+    const usedByTask = tasks.some((task) => (task.hub_codes ?? []).includes(hub.hub_code));
+    if (usedByAccount || usedByTask) {
+      flash("HUB ini masih digunakan oleh akun atau tugas. Pindahkan data tersebut terlebih dahulu.", "error");
+      return;
+    }
+    const confirmed = await confirmSystem("Hapus HUB?", `Hapus ${hub.hub_name} (${hub.hub_code}) dari master HUB?`, "Hapus HUB", true);
+    if (!confirmed) return;
+    const { error } = await supabase.from("hw_hubs").delete().eq("hub_code", hub.hub_code);
+    if (error) flash(messageFrom(error), "error");
+    else { setRefreshKey((value) => value + 1); flash("HUB berhasil dihapus."); }
   };
 
   const downloadBackup = () => {
