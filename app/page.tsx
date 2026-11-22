@@ -44,15 +44,14 @@ const priorityMeta = {
   urgent: { label: "Urgent", tone: "red" },
 } as const;
 const navItems = [
-  { id: "overview", label: "Overview", icon: "⌂" },
-  { id: "tasks", label: "My tasks", icon: "☷" },
-  { id: "board", label: "Kanban board", icon: "▥" },
-  { id: "calendar", label: "Calendar", icon: "▦" },
-  { id: "notes", label: "Notes", icon: "▤" },
-  { id: "team", label: "Team & access", icon: "♧" },
-  { id: "users", label: "User management", icon: "♙" },
+  { id: "overview", label: "Dashboard", icon: "⌂" },
+  { id: "calendar", label: "Kalender", icon: "▦" },
+  { id: "tasks", label: "Daftar Tugas", icon: "☷" },
+  { id: "board", label: "Kanban", icon: "▥" },
+  { id: "notes", label: "Catatan Cepat", icon: "▤" },
+  { id: "settings", label: "Pengaturan & Backup", icon: "⚙" },
 ] as const;
-type ViewId = (typeof navItems)[number]["id"];
+type ViewId = "overview" | "calendar" | "tasks" | "board" | "notes" | "settings" | "team" | "users";
 
 function dateLabel(value?: string | null) {
   if (!value) return "No due date";
@@ -66,6 +65,19 @@ function initials(value: string) {
 }
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
+}
+function localDateKey(date: Date) {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
+}
+function taskCategory(task: Task) {
+  const value = `${task.title} ${task.description ?? ""}`.toLowerCase();
+  if (/meeting|rapat|briefing|review|koordinasi|sync/.test(value)) return "Meeting / Rapat";
+  if (/laporan|report|analisis|audit|monitoring/.test(value)) return "Laporan";
+  if (/budget|anggaran|biaya|keuangan|invoice/.test(value)) return "Keuangan / Budget";
+  if (/dokumen|arsip|surat|file|administrasi/.test(value)) return "Dokumen & Arsip";
+  if (/training|coaching|pelatihan|sosialisasi|hr/.test(value)) return "HR / Training";
+  if (/follow.?up|tindak lanjut|follow up|konfirmasi/.test(value)) return "Follow Up";
+  return "Pekerjaan Umum";
 }
 
 export default function Home() {
@@ -109,13 +121,33 @@ export default function Home() {
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", workspace_type: "team" as "personal" | "team" });
   const [inviteLoginId, setInviteLoginId] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
   const activeWorkspace = workspaces.find((item) => item.id === workspaceId) ?? null;
   const canManage = workspaceRole === "owner" || workspaceRole === "admin";
   const completedCount = tasks.filter((task) => task.status === "done").length;
   const activeCount = tasks.filter((task) => task.status === "in_progress").length;
-  const overdueCount = tasks.filter((task) => task.due_date && task.due_date < new Date().toISOString().slice(0, 10) && task.status !== "done" && task.status !== "cancelled").length;
+  const todayKey = localDateKey(new Date());
+  const weekEnd = new Date(); weekEnd.setDate(weekEnd.getDate() + 7);
+  const weekEndKey = localDateKey(weekEnd);
+  const overdueCount = tasks.filter((task) => task.due_date && task.due_date < todayKey && task.status !== "done" && task.status !== "cancelled").length;
+  const todayTasks = tasks.filter((task) => task.due_date === todayKey && task.status !== "done" && task.status !== "cancelled");
+  const weekTasks = tasks.filter((task) => task.due_date && task.due_date >= todayKey && task.due_date <= weekEndKey && task.status !== "done" && task.status !== "cancelled");
+  const avgProgress = tasks.length ? Math.round(tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0) / tasks.length) : 0;
   const completion = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
+  const calendarCells = useMemo(() => {
+    const first = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const offset = (first.getDay() + 6) % 7;
+    const start = new Date(first); start.setDate(first.getDate() - offset);
+    return Array.from({ length: 42 }, (_, index) => { const day = new Date(start); day.setDate(start.getDate() + index); return day; });
+  }, [calendarMonth]);
+  const categoryRows = useMemo(() => {
+    const labels = ["Meeting / Rapat", "Dokumen & Arsip", "Laporan", "Follow Up", "Keuangan / Budget", "Pekerjaan Umum"];
+    return labels.map((label) => ({ label, count: tasks.filter((task) => taskCategory(task) === label).length }));
+  }, [tasks]);
+  const priorityRows = useMemo(() => (["urgent", "high", "medium", "low"] as const).map((priority) => ({
+    label: priorityMeta[priority].label, count: tasks.filter((task) => task.priority === priority).length, tone: priority,
+  })), [tasks]);
 
   const flash = useCallback((text: string) => {
     setToast(text);
@@ -299,7 +331,7 @@ export default function Home() {
     } finally { setBusy(false); }
   };
 
-  const openTaskEditor = (task?: Task) => {
+  const openTaskEditor = (task?: Task, dueDate?: string) => {
     setEditingTaskId(task?.id ?? null);
     setTaskForm(task ? {
       title: task.title,
@@ -309,7 +341,7 @@ export default function Home() {
       assigned_to: task.assigned_to ?? "",
       status: task.status,
       progress: task.progress ?? 0,
-    } : { title: "", description: "", priority: "medium", due_date: "", assigned_to: user?.id ?? "", status: "todo", progress: 0 });
+    } : { title: "", description: "", priority: "medium", due_date: dueDate ?? "", assigned_to: user?.id ?? "", status: "todo", progress: 0 });
     setShowTaskModal(true);
   };
 
@@ -512,6 +544,66 @@ export default function Home() {
     } catch (error) { flash(messageFrom(error)); }
   };
 
+
+  const downloadBackup = () => {
+    const backup = {
+      app: "HUB WORKSPACE",
+      backupVersion: 1,
+      exportedAt: new Date().toISOString(),
+      workspace: { id: activeWorkspace?.id, name: activeWorkspace?.name },
+      data: { tasks, notes, events },
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `hub-workspace-backup-${localDateKey(new Date())}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    flash("Backup berhasil diunduh.");
+  };
+
+  const restoreBackup = async (file?: File) => {
+    if (!file || !supabase || !user || !activeWorkspace) return;
+    if (file.size > 10 * 1024 * 1024) { flash("Ukuran file backup maksimal 10 MB."); return; }
+    if (!window.confirm("Pulihkan data dari file backup? Data yang ada tidak dihapus; data backup akan ditambahkan ke workspace ini.")) return;
+    setBusy(true);
+    try {
+      const parsed = JSON.parse(await file.text()) as { app?: string; backupVersion?: number; data?: { tasks?: Task[]; notes?: Note[]; events?: EventItem[] } };
+      if (parsed.app !== "HUB WORKSPACE" || parsed.backupVersion !== 1 || !parsed.data) throw new Error("File backup tidak dikenali atau versinya tidak didukung.");
+      const backupTasks = Array.isArray(parsed.data.tasks) ? parsed.data.tasks : [];
+      const backupNotes = Array.isArray(parsed.data.notes) ? parsed.data.notes : [];
+      const backupEvents = Array.isArray(parsed.data.events) ? parsed.data.events : [];
+      if (backupTasks.length > 5000 || backupNotes.length > 2000 || backupEvents.length > 2000) throw new Error("Jumlah data dalam backup melebihi batas.");
+      const taskRows = backupTasks.filter((item) => item && typeof item.title === "string" && item.title.trim()).map((item) => ({
+        workspace_id: activeWorkspace.id, created_by: user.id,
+        title: item.title.slice(0, 240), description: (item.description ?? "").slice(0, 5000),
+        status: (["todo","in_progress","waiting","done","cancelled"].includes(item.status) ? item.status : "todo"),
+        priority: (["low","medium","high","urgent"].includes(item.priority) ? item.priority : "medium"),
+        progress: Math.max(0, Math.min(100, Number(item.progress) || 0)),
+        due_date: item.due_date || null,
+        assigned_to: item.assigned_to && members.some((member) => member.user_id === item.assigned_to) ? item.assigned_to : null,
+      }));
+      const noteRows = backupNotes.filter((item) => item && typeof item.content === "string").map((item) => ({
+        workspace_id: activeWorkspace.id, created_by: user.id,
+        title: (item.title || "Catatan Pulihan").slice(0, 240), content: item.content.slice(0, 12000), is_pinned: Boolean(item.is_pinned),
+      }));
+      const eventRows = backupEvents.filter((item) => item && typeof item.title === "string" && item.starts_at && !Number.isNaN(new Date(item.starts_at).getTime())).map((item) => ({
+        workspace_id: activeWorkspace.id, created_by: user.id,
+        title: item.title.slice(0, 240), description: (item.description ?? "").slice(0, 5000),
+        location: (item.location ?? "").slice(0, 500), starts_at: new Date(item.starts_at).toISOString(),
+        ends_at: item.ends_at && !Number.isNaN(new Date(item.ends_at).getTime()) ? new Date(item.ends_at).toISOString() : null,
+        all_day: Boolean(item.all_day),
+      }));
+      if (taskRows.length) { const { error } = await supabase.from("hw_tasks").insert(taskRows); if (error) throw error; }
+      if (noteRows.length) { const { error } = await supabase.from("hw_notes").insert(noteRows); if (error) throw error; }
+      if (eventRows.length) { const { error } = await supabase.from("hw_calendar_events").insert(eventRows); if (error) throw error; }
+      setRefreshKey((value) => value + 1);
+      flash(`Pemulihan selesai: ${taskRows.length} tugas, ${noteRows.length} catatan, ${eventRows.length} agenda.`);
+    } catch (error) { flash(messageFrom(error)); }
+    finally { setBusy(false); }
+  };
+
   const visibleTasks = useMemo(() => tasks.filter((task) => {
     const query = taskQuery.toLowerCase();
     const matchesQuery = !query || task.title.toLowerCase().includes(query) || task.description?.toLowerCase().includes(query);
@@ -572,143 +664,202 @@ export default function Home() {
     </div>
   );
 
-  const title = navItems.find((item) => item.id === activeView)?.label ?? "Overview";
+  const title = ({ overview: "Dashboard", calendar: "Kalender", tasks: "Daftar Tugas", board: "Kanban", notes: "Catatan Cepat", settings: "Pengaturan & Backup", team: "Team & Access", users: "Manajemen Pengguna" } as Record<ViewId, string>)[activeView];
   const pendingInvites = invites.filter((invite) => !invite.accepted_at && (invite.login_id?.toLowerCase() === loginId.toLowerCase() || invite.email?.toLowerCase() === (user.email ?? "").toLowerCase()));
   const upcomingEvents = events.filter((event) => new Date(event.starts_at).getTime() >= Date.now()).slice(0, 4);
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-lockup"><div className="brand-mark">H</div><div><b>HUB WORKSPACE</b><span>Work, clearly.</span></div></div>
+        <div className="brand-lockup">
+          <div className="brand-mark">H</div>
+          <div><b>HUB WORKSPACE</b><span>Task & Kalender Kerja</span></div>
+        </div>
         <div className="workspace-picker">
-          <div className="workspace-symbol">{activeWorkspace?.workspace_type === "team" ? "⌘" : "◒"}</div>
-          <div className="workspace-picker-copy"><small>WORKSPACE</small><strong>{activeWorkspace?.name ?? "Loading…"}</strong></div>
-          <select aria-label="Switch workspace" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
+          <div className="workspace-symbol">⌂</div>
+          <div className="workspace-picker-copy"><small>WORKSPACE AKTIF</small><strong>{activeWorkspace?.name ?? "Memuat workspace…"}</strong></div>
+          <select aria-label="Pilih workspace" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
             {workspaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
           </select>
         </div>
-        <button className="new-workspace" onClick={() => setShowWorkspaceModal(true)}>＋ <span>New workspace</span></button>
-        <div className="nav-label">WORKSPACE</div>
+        <div className="sidebar-section-label">MENU UTAMA</div>
         <nav className="side-nav">
-          {navItems.filter((item) => item.id !== "users" || isAppAdmin || isPlatformAdmin).map((item) => (
-            <button key={item.id} className={activeView === item.id ? "nav-item active" : "nav-item"} onClick={() => setActiveView(item.id)}>
-              <span className="nav-icon">{item.icon}</span>{item.label}
+          {navItems.map((item) => (
+            <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "nav-item active" : "nav-item"} onClick={() => setActiveView(item.id)}>
+              <span className="nav-icon">{item.icon}</span><span className="nav-text">{item.label}</span>
               {item.id === "tasks" && tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").length > 0 && <small>{tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").length}</small>}
             </button>
           ))}
         </nav>
+        <div className="sidebar-info">
+          <b>Workspace terhubung</b>
+          <span>Data tersimpan aman di cloud dan dapat diakses bersama sesuai hak akses.</span>
+          <i><span /></i>
+          <small>SUPABASE CLOUD SYNC</small>
+        </div>
         <div className="sidebar-bottom">
-          <div className="plan-card"><div className="plan-icon">✳</div><b>Make work flow.</b><p>Your space for focused work and shared progress.</p><span>{isPlatformAdmin ? "SUPER ADMIN" : "PERSONAL + TEAM"}</span></div>
           <div className="profile-row">
             <div className="avatar">{initials(profileName)}</div>
-            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()}</span></div>
-            <button className="icon-button" onClick={signOut} title="Sign out">↗</button>
+            <div className="profile-copy"><b>{profileName}</b><span>ID: {loginId.toUpperCase()} · {isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "USER"}</span></div>
+            <button className="icon-button" onClick={signOut} title="Keluar">↗</button>
           </div>
         </div>
       </aside>
 
       <main className="main-panel">
         <header className="topbar">
-          <div className="breadcrumb"><span>Workspace</span><b>/</b><strong>{title}</strong></div>
+          <div className="breadcrumb"><span>HUB WORKSPACE</span><b>/</b><strong>{title}</strong></div>
           <div className="topbar-right">
-            <span className="sync-label"><i /> Cloud synced</span>
-            <button className="avatar top-avatar" onClick={signOut} title="Sign out">{initials(profileName)}</button>
+            <span className="sync-label"><i /> Cloud tersinkron</span>
+            <span className="top-role">{isPlatformAdmin ? "SUPER ADMIN" : isAppAdmin ? "ADMIN" : "WORKSPACE USER"}</span>
+            <button className="avatar top-avatar" onClick={signOut} title="Keluar">{initials(profileName)}</button>
           </div>
         </header>
         <div className="page-content">
           <div className="mobile-page-heading">
-            <div className="brand-mark">H</div>
-            <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} aria-label="Switch workspace">
-              {workspaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
-            </select>
+            <div className="mobile-brand-mark">H</div>
+            <div><b>HUB WORKSPACE</b><span>{activeWorkspace?.name ?? "Workspace"}</span></div>
             <button className="icon-button" onClick={signOut}>↗</button>
           </div>
 
           {pendingInvites.length > 0 && <div className="invite-banner"><div><b>You have {pendingInvites.length} workspace invitation{pendingInvites.length > 1 ? "s" : ""}</b><span>Accept it in Team & access to join the workspace.</span></div><button onClick={() => setActiveView("team")}>Review invitations ↗</button></div>}
 
           {activeView === "overview" && <>
+            <div className="workspace-banner">
+              <div><span>HUB WORKSPACE · WORKSPACE AKTIF</span><b>{activeWorkspace?.name ?? "Workspace"}</b><small>Kelola pekerjaan, deadline, agenda, dan catatan dari satu tempat.</small></div>
+              <span className="cloud-badge"><i /> CLOUD SYNC AKTIF</span>
+            </div>
             <div className="page-heading">
-              <div><div className="eyebrow">YOUR OVERVIEW</div><h1>Good work starts<br className="mobile-break" /> with <em>clarity.</em></h1><p>Here’s what’s happening in {activeWorkspace?.name ?? "your workspace"}.</p></div>
-              <div className="heading-actions"><button className="secondary-button" onClick={() => setShowEventModal(true)}>＋ Add event</button><button className="primary-button" onClick={() => openTaskEditor()}>＋ New task</button></div>
+              <div><div className="eyebrow">RINGKASAN AKTIVITAS</div><h1>To-Do List & <em>Kalender Kerja</em></h1><p>Pantau tugas harian, prioritas, deadline, agenda, dan progres pekerjaan.</p></div>
+              <div className="heading-actions"><button className="secondary-button" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }}>＋ Catatan Cepat</button><button className="primary-button" onClick={() => openTaskEditor()}>＋ Input Task</button><button className="print-button" onClick={() => window.print()}>Print / PDF</button></div>
             </div>
-            <div className="stats-grid">
-              <StatCard label="Total tasks" value={tasks.length} detail="Across this workspace" icon="☷" />
-              <StatCard label="In progress" value={activeCount} detail="Work happening now" icon="◷" accent="orange" />
-              <StatCard label="Completed" value={completedCount} detail={tasks.length ? `${completion}% completion rate` : "No tasks completed yet"} icon="✓" accent="green" />
-              <StatCard label="Overdue" value={overdueCount} detail="Need your attention" icon="!" accent="red" />
+            <div className="stats-grid six-stats">
+              <StatCard label="Total Task" value={tasks.length} detail="Semua tugas tersimpan" icon="☷" />
+              <StatCard label="Selesai" value={completedCount} detail="Tugas yang sudah closed" icon="✓" accent="green" />
+              <StatCard label="Progress" value={avgProgress} detail="Rata-rata penyelesaian (%)" icon="◔" accent="orange" />
+              <StatCard label="Terlambat" value={overdueCount} detail="Butuh follow up" icon="!" accent="red" />
+              <StatCard label="Hari Ini" value={todayTasks.length} detail="Tugas jatuh tempo hari ini" icon="◷" />
+              <StatCard label="Minggu Ini" value={weekTasks.length} detail="Agenda 7 hari ke depan" icon="▦" accent="green" />
             </div>
-            <div className="overview-grid">
-              <section className="panel-card progress-panel">
-                <div className="section-head"><div><div className="eyebrow">WORK PULSE</div><h3>Progress at a glance</h3></div><button className="text-button" onClick={() => setActiveView("board")}>Open board ↗</button></div>
-                <div className="progress-summary"><strong>{completion}%</strong><span>of tasks completed</span></div>
-                <div className="progress-track"><i style={{ width: `${completion}%` }} /></div>
-                <div className="progress-legend"><span><i className="dot dot-orange" /> In progress <b>{activeCount}</b></span><span><i className="dot dot-green" /> Completed <b>{completedCount}</b></span><span><i className="dot dot-gray" /> To do <b>{tasks.filter((task) => task.status === "todo").length}</b></span></div>
-                <div className="focus-note"><span>✳</span><div><b>Keep the next step visible.</b><p>Small, clear actions make team progress easier to follow.</p></div></div>
+            <div className="dashboard-columns">
+              <section className="panel-card dashboard-visual">
+                <div className="section-head"><div><div className="eyebrow">ANALISIS PEKERJAAN</div><h3>Dashboard Visual</h3><p>Distribusi tugas berdasarkan kategori dan prioritas.</p></div><button className="text-button" onClick={() => setRefreshKey((value) => value + 1)}>↻ Refresh</button></div>
+                <div className="chart-pair">
+                  <div className="chart-block"><b>By Category</b><div className="horizontal-bars">{categoryRows.map((row) => <div className="bar-row" key={row.label}><span>{row.label}</span><i><b style={{ width: `${tasks.length ? row.count / tasks.length * 100 : 0}%` }} /></i><strong>{row.count}</strong></div>)}</div></div>
+                  <div className="chart-block"><b>By Priority</b><div className="horizontal-bars priority-bars">{priorityRows.map((row) => <div className="bar-row" key={row.tone}><span>{row.label}</span><i><b className={row.tone} style={{ width: `${tasks.length ? row.count / tasks.length * 100 : 0}%` }} /></i><strong>{row.count}</strong></div>)}</div></div>
+                </div>
+                <div className="dashboard-bottom-note"><span>✦</span><div><b>Jaga fokus pada prioritas berikutnya.</b><small>Mulai dari tugas yang mendekati deadline dan berdampak paling besar.</small></div></div>
               </section>
-              <section className="panel-card">
-                <div className="section-head"><div><div className="eyebrow">UP NEXT</div><h3>Upcoming events</h3></div><button className="text-button" onClick={() => setActiveView("calendar")}>View calendar ↗</button></div>
-                {upcomingEvents.length === 0 ? <EmptyInline title="Nothing scheduled" detail="Add an event to make space for what matters." action="＋ Add event" onClick={() => setShowEventModal(true)} /> :
-                  <div className="event-list">{upcomingEvents.map((item) => <div className="event-row" key={item.id}><div className="event-date"><b>{new Date(item.starts_at).getDate()}</b><span>{new Intl.DateTimeFormat("en", { month: "short" }).format(new Date(item.starts_at))}</span></div><div className="event-copy"><b>{item.title}</b><span>{timeLabel(item.starts_at)}{item.location ? ` · ${item.location}` : ""}</span></div><span className="event-arrow">↗</span></div>)}</div>}
-              </section>
-              <section className="panel-card task-preview wide-panel">
-                <div className="section-head"><div><div className="eyebrow">YOUR PRIORITIES</div><h3>Tasks to move forward</h3></div><button className="text-button" onClick={() => setActiveView("tasks")}>All tasks ↗</button></div>
-                {tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").slice(0, 5).length === 0 ? <EmptyInline title="A clean slate." detail="Add a task to give your next idea a place to go." action="＋ Create task" onClick={() => openTaskEditor()} /> :
-                  <div className="task-rows">{tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").slice(0, 5).map((task) => <TaskRow key={task.id} task={task} onStatus={(status) => changeTask(task.id, { status, progress: status === "done" ? 100 : task.progress })} />)}</div>}
-              </section>
-              <section className="panel-card notes-preview">
-                <div className="section-head"><div><div className="eyebrow">QUICK NOTES</div><h3>On your mind</h3></div><button className="text-button" onClick={() => setActiveView("notes")}>All notes ↗</button></div>
-                {notes.slice(0, 3).length === 0 ? <EmptyInline title="Capture a thought." detail="Keep useful context close to the work." action="＋ New note" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }} /> : notes.slice(0, 3).map((note) => <button className="note-mini" key={note.id} onClick={() => { setEditingNoteId(note.id); setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><span>{note.is_pinned ? "◆" : "◇"}</span><b>{note.title}</b><small>{dateLabel(note.updated_at.slice(0, 10))}</small></button>)}
-              </section>
+              <div className="dashboard-side">
+                <section className="panel-card today-panel">
+                  <div className="section-head"><div><div className="eyebrow">TODAY AT A GLANCE</div><h3>Ringkasan Hari Ini</h3></div><span className="today-date">{new Intl.DateTimeFormat("id-ID", { day: "2-digit", month: "short" }).format(new Date())}</span></div>
+                  <div className="today-summary"><strong>{todayTasks.length}</strong><span>tugas jatuh tempo hari ini</span><small>{overdueCount} tugas terlambat perlu follow up</small></div>
+                  <div className="today-focus"><b>Fokus berikutnya</b>{(todayTasks[0] || weekTasks[0]) ? <span>{(todayTasks[0] || weekTasks[0]).title}</span> : <span>Belum ada deadline dekat. Waktunya merencanakan pekerjaan.</span>}</div>
+                  <button className="text-button" onClick={() => setActiveView("tasks")}>Lihat semua tugas ↗</button>
+                </section>
+                <section className="panel-card quick-tips">
+                  <div className="section-head"><div><div className="eyebrow">QUICK TIPS</div><h3>Tips Produktivitas</h3></div><span className="tips-icon">✦</span></div>
+                  <p>Tugas tanpa deadline cenderung tertunda. Tentukan tenggat dan PIC agar tindak lanjut lebih jelas.</p>
+                  <div className="tip-footer"><span>1 TIP HARI INI</span><b>Plan · Prioritize · Finish</b></div>
+                </section>
+              </div>
             </div>
+            <section className="panel-card dashboard-priorities">
+              <div className="section-head"><div><div className="eyebrow">PRIORITAS 7 HARI KE DEPAN</div><h3>Agenda dan deadline terdekat</h3></div><button className="text-button" onClick={() => setActiveView("calendar")}>Buka Kalender ↗</button></div>
+              {weekTasks.length ? <div className="upcoming-task-list">{weekTasks.slice(0, 6).map((task) => <div className="upcoming-task" key={task.id}><span className="upcoming-date">{dateLabel(task.due_date)}</span><b>{task.title}</b><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><span className={`pill ${statusMeta[task.status].tone}`}>{statusMeta[task.status].label}</span><button className="icon-button" onClick={() => openTaskEditor(task)}>✎</button></div>)}</div> : <EmptyInline title="Belum ada deadline minggu ini." detail="Tambahkan deadline agar agenda lebih mudah dipantau." action="＋ Input Task" onClick={() => openTaskEditor()} />}
+            </section>
           </>}
-
+ 
           {activeView === "tasks" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">GET IT DONE</div><h1>Your <em>tasks.</em></h1><p>Keep priorities clear and progress moving.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ New task</button></div>
-            <div className="toolbar"><div className="search-box"><span>⌕</span><input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="Search tasks…" /></div><select value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)}><option value="all">All statuses</option><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select><button className="secondary-button" onClick={() => setActiveView("board")}>▥ Board view</button></div>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">PENGELOLAAN PEKERJAAN</div><h1>Daftar <em>Tugas</em></h1><p>Semua pekerjaan, deadline, PIC, prioritas, dan progres dalam satu tabel.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ Input Task</button></div>
+            <div className="task-toolbar"><div className="search-box"><span>⌕</span><input value={taskQuery} onChange={(e) => setTaskQuery(e.target.value)} placeholder="Cari tugas, PIC, atau keterangan…" /></div><select value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)}><option value="all">Semua Status</option><option value="todo">Belum dikerjakan</option><option value="in_progress">Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select><button className="secondary-button" onClick={() => setActiveView("board")}>▥ Tampilan Kanban</button></div>
             <section className="panel-card table-card">
-              {visibleTasks.length === 0 ? <EmptyState title="No tasks match this view." detail="Try another filter or create a new task." action="＋ New task" onClick={() => openTaskEditor()} /> :
-                <div className="task-table-wrap"><table className="task-table"><thead><tr><th>Task</th><th>PIC</th><th>Status</th><th>Priority</th><th>Due date</th><th>Progress</th><th /></tr></thead><tbody>
-                  {visibleTasks.map((task) => <tr key={task.id}><td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "No description"}</span></div></td><td><select className="status-select assignee-select" value={task.assigned_to ?? ""} onChange={(e) => changeTask(task.id, { assigned_to: e.target.value || null })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}</option>)}</select></td><td><select className="status-select" value={task.status} onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></td><td><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span></td><td className="date-cell">{dateLabel(task.due_date)}</td><td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td><td><div className="row-actions"><button className="icon-button" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button danger-hover" title="Delete task" onClick={() => deleteTask(task.id)}>×</button></div></td></tr>)}
+              <div className="task-list-heading"><div><b>Daftar seluruh pekerjaan</b><span>{visibleTasks.length} tugas ditemukan</span></div><span className="table-info">Klik Edit untuk memperbarui data tugas</span></div>
+              {visibleTasks.length === 0 ? <EmptyState title="Belum ada tugas pada filter ini." detail="Tambahkan pekerjaan atau ubah filter pencarian." action="＋ Input Task" onClick={() => openTaskEditor()} /> :
+                <div className="task-table-wrap"><table className="task-table office-task-table"><thead><tr><th>Tanggal</th><th>Deadline</th><th>Kategori</th><th>Tugas</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
+                  {visibleTasks.map((task) => <tr key={task.id}>
+                    <td className="date-cell">{dateLabel(task.created_at.slice(0,10))}</td>
+                    <td className="date-cell">{dateLabel(task.due_date)}</td>
+                    <td><span className="category-tag">{taskCategory(task)}</span></td>
+                    <td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "Tidak ada keterangan"}</span></div></td>
+                    <td><span className="pic-name">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? (task.assigned_to === user?.id ? profileName : "Belum ditentukan")}</span></td>
+                    <td><span className={`priority-text ${task.priority}`}>{priorityMeta[task.priority].label}</span></td>
+                    <td><select className={`status-select status-${task.status}`} value={task.status} onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">Belum</option><option value="in_progress">Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Batal</option></select></td>
+                    <td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td>
+                    <td><button className="edit-task-button" onClick={() => openTaskEditor(task)}>Edit</button><button className="icon-button danger-hover" title="Hapus tugas" onClick={() => deleteTask(task.id)}>×</button></td>
+                  </tr>)}
                 </tbody></table></div>}
             </section>
           </>}
-
+ 
           {activeView === "board" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">VISUAL WORKFLOW</div><h1>Kanban <em>board.</em></h1><p>Move a task between columns as work changes.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ New task</button></div>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">VISUAL WORKFLOW</div><h1>Kanban <em>Board</em></h1><p>Pindahkan kartu sesuai perkembangan pekerjaan.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ Input Task</button></div>
+            <div className="kanban-intro"><span>WORKFLOW TUGAS</span><b>{tasks.filter((task) => task.status !== "done" && task.status !== "cancelled").length} pekerjaan aktif</b><small>Drag & drop kartu untuk mengubah status.</small></div>
             <div className="board-scroll"><div className="kanban-grid">
               {(["todo", "in_progress", "waiting", "done"] as const).map((status) => {
                 const columnTasks = tasks.filter((task) => task.status === status);
-                return <section className="kanban-column" key={status} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (draggedTask) { void changeTask(draggedTask, { status, progress: status === "done" ? 100 : (tasks.find((task) => task.id === draggedTask)?.progress ?? 0) }); setDraggedTask(null); } }}>
-                  <div className="kanban-head"><span className={`status-dot ${statusMeta[status].tone}`} /><b>{statusMeta[status].label}</b><small>{columnTasks.length}</small></div>
+                return <section className={`kanban-column kanban-${status}`} key={status} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (draggedTask) { void changeTask(draggedTask, { status, progress: status === "done" ? 100 : (tasks.find((task) => task.id === draggedTask)?.progress ?? 0) }); setDraggedTask(null); } }}>
+                  <div className="kanban-head"><span className={`status-dot ${statusMeta[status].tone}`} /><b>{status === "todo" ? "Belum Dikerjakan" : status === "in_progress" ? "Sedang Berjalan" : status === "waiting" ? "Menunggu" : "Selesai"}</b><small>{columnTasks.length}</small></div>
                   {columnTasks.map((task) => <article className="kanban-card" key={task.id} draggable onDragStart={() => setDraggedTask(task.id)} onDragEnd={() => setDraggedTask(null)}>
-                    <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Delete task" onClick={() => deleteTask(task.id)}>×</button></div></div>
-                    <h4>{task.title}</h4><p>{task.description || "No description added."}</p>
+                    <div className="kanban-card-top"><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><div className="row-actions"><button className="icon-button tiny" title="Edit task" onClick={() => openTaskEditor(task)}>✎</button><button className="icon-button tiny danger-hover" title="Hapus task" onClick={() => deleteTask(task.id)}>×</button></div></div>
+                    <span className="category-tag">{taskCategory(task)}</span><h4>{task.title}</h4><p>{task.description || "Tidak ada keterangan tambahan."}</p>
                     <div className="kanban-progress"><span><i style={{ width: `${task.progress}%` }} /></span><small>{task.progress}%</small></div>
-                    <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><span className="kanban-assignee">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? "Unassigned"}</span><select value={task.status} aria-label="Change task status" onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option></select></div>
+                    <div className="kanban-card-bottom"><span>◷ {dateLabel(task.due_date)}</span><span className="kanban-assignee">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? "Belum ada PIC"}</span></div>
+                    <select className="kanban-status-change" value={task.status} aria-label="Ubah status tugas" onChange={(e) => changeTask(task.id, { status: e.target.value as Task["status"], progress: e.target.value === "done" ? 100 : task.progress })}><option value="todo">Belum dikerjakan</option><option value="in_progress">Sedang berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option></select>
                   </article>)}
-                  {columnTasks.length === 0 && <div className="kanban-empty">Drop a task here</div>}
+                  {columnTasks.length === 0 && <div className="kanban-empty">Belum ada kartu tugas</div>}
                 </section>;
               })}
             </div></div>
           </>}
-
+ 
           {activeView === "calendar" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">MAKE TIME FOR IT</div><h1>Team <em>calendar.</em></h1><p>Events and important moments in one shared timeline.</p></div><button className="primary-button" onClick={() => setShowEventModal(true)}>＋ Add event</button></div>
-            <div className="calendar-layout">
-              <section className="panel-card calendar-main"><div className="section-head"><div><div className="eyebrow">SCHEDULE</div><h3>Upcoming events</h3></div><span className="subtle-count">{events.length} total</span></div>
-                {events.length === 0 ? <EmptyState title="Your calendar is open." detail="Add a meeting, milestone, or reminder." action="＋ Add event" onClick={() => setShowEventModal(true)} /> :
-                  <div className="event-timeline">{events.map((item) => <div className="timeline-event" key={item.id}><div className="timeline-marker" /><div className="timeline-date">{timeLabel(item.starts_at)}</div><div className="timeline-card"><div><h4>{item.title}</h4><p>{item.description || "No additional details."}</p><span>{item.location ? `⌖ ${item.location}` : "Workspace event"}</span></div><button className="icon-button danger-hover" onClick={async () => { if (!supabase || !window.confirm("Delete this event?")) return; const { error } = await supabase.from("hw_calendar_events").delete().eq("id", item.id); if (error) flash(messageFrom(error)); else setRefreshKey((value) => value + 1); }}>×</button></div></div>)}</div>}
-              </section>
-              <section className="panel-card calendar-side"><div className="eyebrow">THIS WORKSPACE</div><h3>Time well spent.</h3><p>Use shared events to keep meetings, deadlines, and milestones visible to everyone.</p><div className="calendar-side-stat"><b>{events.filter((event) => new Date(event.starts_at).toDateString() === new Date().toDateString()).length}</b><span>Events today</span></div><div className="calendar-side-stat"><b>{upcomingEvents.length}</b><span>Coming up next</span></div></section>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">PERENCANAAN & AGENDA</div><h1>Kalender <em>Bulanan</em></h1><p>Pantau deadline tugas dan agenda dalam satu tampilan kalender.</p></div><button className="primary-button" onClick={() => openTaskEditor()}>＋ Input Task</button></div>
+            <section className="panel-card calendar-month-panel">
+              <div className="calendar-month-head"><div><span>KALENDER KERJA</span><h3>{new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(calendarMonth)}</h3></div><div className="calendar-month-controls"><button className="secondary-button" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>←</button><button className="secondary-button" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Hari ini</button><button className="secondary-button" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>→</button></div></div>
+              <div className="month-grid">
+                {["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"].map((day) => <div className="month-weekday" key={day}>{day}</div>)}
+                {calendarCells.map((day) => {
+                  const key = localDateKey(day);
+                  const dayTasks = tasks.filter((task) => task.due_date === key);
+                  const dayEvents = events.filter((event) => localDateKey(new Date(event.starts_at)) === key);
+                  const inMonth = day.getMonth() === calendarMonth.getMonth();
+                  return <div className={`month-day ${inMonth ? "" : "outside-month"} ${key === todayKey ? "is-today" : ""}`} key={key} onDoubleClick={() => openTaskEditor(undefined, key)}>
+                    <div className="month-day-head"><b>{day.getDate()}</b><small>{dayTasks.length + dayEvents.length} agenda</small></div>
+                    <div className="month-day-items">
+                      {dayTasks.slice(0, 3).map((task) => <button key={task.id} className={`calendar-task-chip ${task.status}`} onClick={() => openTaskEditor(task)} title={task.title}>{task.title}</button>)}
+                      {dayEvents.slice(0, 2).map((event) => <span key={event.id} className="calendar-event-chip" title={event.title}>● {event.title}</span>)}
+                      {dayTasks.length + dayEvents.length > 5 && <small className="more-agenda">+{dayTasks.length + dayEvents.length - 5} lainnya</small>}
+                    </div>
+                    <button className="add-on-day" onClick={() => openTaskEditor(undefined, key)}>＋</button>
+                  </div>;
+                })}
+              </div>
+              <p className="calendar-hint">Tips: klik agenda untuk mengedit, atau klik dua kali tanggal untuk membuat tugas baru.</p>
+            </section>
+            <div className="calendar-summary-grid">
+              <section className="panel-card"><div className="section-head"><div><div className="eyebrow">DEADLINE DEKAT</div><h3>Prioritas 7 Hari ke Depan</h3></div><span className="subtle-count">{weekTasks.length} tugas</span></div>{weekTasks.length ? weekTasks.slice(0,5).map((task) => <div className="event-row" key={task.id}><div className="event-date"><b>{new Date(task.due_date + "T00:00:00").getDate()}</b><span>{new Intl.DateTimeFormat("id-ID",{month:"short"}).format(new Date(task.due_date + "T00:00:00"))}</span></div><div className="event-copy"><b>{task.title}</b><span>{dateLabel(task.due_date)} · {priorityMeta[task.priority].label}</span></div><button className="icon-button" onClick={() => openTaskEditor(task)}>✎</button></div>) : <EmptyInline title="Tidak ada deadline dekat." detail="Semua agenda mendatang akan tampil di sini." action="＋ Buat tugas" onClick={() => openTaskEditor()} />}</section>
+              <section className="panel-card calendar-side"><div className="eyebrow">AGENDA WORKSPACE</div><h3>Waktu kerja lebih tertata.</h3><p>Jadikan deadline dan agenda terlihat sejak awal agar tim dapat menentukan prioritas.</p><div className="calendar-side-stat"><b>{todayTasks.length}</b><span>Jatuh tempo hari ini</span></div><div className="calendar-side-stat"><b>{overdueCount}</b><span>Terlambat</span></div></section>
             </div>
           </>}
-
+ 
           {activeView === "notes" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">THINK IT THROUGH</div><h1>Your <em>notes.</em></h1><p>Keep ideas, context, and useful details close.</p></div><button className="primary-button" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }}>＋ New note</button></div>
-            {notes.length === 0 ? <section className="panel-card"><EmptyState title="Nothing written down yet." detail="Start with a meeting note, a quick idea, or a useful reminder." action="＋ Create note" onClick={() => setShowNoteModal(true)} /></section> :
-              <div className="notes-grid">{notes.map((note) => <article className="note-card" key={note.id}><div className="note-card-head"><span className="note-symbol">▤</span><div className="note-actions"><button className={note.is_pinned ? "icon-button pinned" : "icon-button"} title="Pin note" onClick={() => togglePin(note)}>◆</button><button className="icon-button danger-hover" title="Delete note" onClick={() => deleteNote(note.id)}>×</button></div></div><button className="note-content-button" onClick={() => { setEditingNoteId(note.id); setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><h3>{note.title}</h3><p>{note.content || "An empty note. Add a few thoughts…"}</p></button><div className="note-card-foot"><span>{note.is_pinned ? "PINNED" : "NOTE"}</span><small>Updated {dateLabel(note.updated_at.slice(0, 10))}</small></div></article>)}</div>}
+            <div className="page-heading compact-heading"><div><div className="eyebrow">RUANG IDE & CATATAN</div><h1>Catatan <em>Cepat</em></h1><p>Simpan informasi, ide, dan hasil diskusi agar mudah ditemukan kembali.</p></div><button className="primary-button" onClick={() => { setEditingNoteId(null); setNoteForm({ title: "", content: "" }); setShowNoteModal(true); }}>＋ Catatan Baru</button></div>
+            {notes.length === 0 ? <section className="panel-card"><EmptyState title="Belum ada catatan." detail="Mulai dengan catatan meeting, ide singkat, atau informasi penting." action="＋ Buat Catatan" onClick={() => setShowNoteModal(true)} /></section> :
+              <div className="notes-grid">{notes.map((note) => <article className="note-card" key={note.id}><div className="note-card-head"><span className="note-symbol">▤</span><div className="note-actions"><button className={note.is_pinned ? "icon-button pinned" : "icon-button"} title="Pin catatan" onClick={() => togglePin(note)}>◆</button><button className="icon-button danger-hover" title="Hapus catatan" onClick={() => deleteNote(note.id)}>×</button></div></div><button className="note-content-button" onClick={() => { setEditingNoteId(note.id); setNoteForm({ title: note.title, content: note.content }); setShowNoteModal(true); }}><h3>{note.title}</h3><p>{note.content || "Catatan kosong. Tambahkan informasi…"}</p></button><div className="note-card-foot"><span>{note.is_pinned ? "PINNED" : "CATATAN"}</span><small>Diperbarui {dateLabel(note.updated_at.slice(0, 10))}</small></div></article>)}</div>}
           </>}
-
+ 
+          {activeView === "settings" && <>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">PREFERENSI WORKSPACE</div><h1>Pengaturan <em>& Backup</em></h1><p>Kelola akses anggota dan simpan salinan data pekerjaanmu.</p></div></div>
+            <div className="settings-grid">
+              <section className="panel-card settings-card"><div className="settings-icon">⇩</div><div className="eyebrow">DATA & KEAMANAN</div><h3>Backup Workspace</h3><p>Unduh salinan tugas, catatan, dan agenda dalam format JSON agar bisa disimpan sebagai arsip.</p><button className="primary-button" onClick={downloadBackup}>Unduh Backup JSON ↗</button><small>File backup hanya berisi data workspace yang sedang aktif.</small></section>
+              <section className="panel-card settings-card"><div className="settings-icon">↥</div><div className="eyebrow">PEMULIHAN DATA</div><h3>Restore dari Backup</h3><p>Pulihkan data dari file backup HUB WORKSPACE. Data akan ditambahkan tanpa menghapus data yang sudah ada.</p><label className="restore-file-button">Pilih File Backup<input type="file" accept="application/json,.json" onChange={(e) => { const file = e.target.files?.[0]; if (file) void restoreBackup(file); e.currentTarget.value = ""; }} /></label><small>Format file .json · Maksimal 10 MB</small></section>
+              <section className="panel-card settings-card"><div className="settings-icon">♧</div><div className="eyebrow">KOLABORASI</div><h3>Team & Access</h3><p>Kelola anggota workspace, peran, dan undangan pengguna berdasarkan ID login.</p><button className="secondary-button" onClick={() => setActiveView("team")}>Kelola Anggota ↗</button></section>
+              {(isAppAdmin || isPlatformAdmin) && <section className="panel-card settings-card"><div className="settings-icon">♙</div><div className="eyebrow">ADMINISTRASI AKUN</div><h3>Manajemen Pengguna</h3><p>Buat akun ID dan password, atur role aplikasi, reset password, serta aktif/nonaktifkan akun.</p><button className="secondary-button" onClick={() => setActiveView("users")}>Kelola Akun ↗</button></section>}
+              <section className="panel-card settings-note"><b>Informasi penyimpanan</b><p>HUB WORKSPACE menggunakan Supabase Cloud untuk menyimpan data dan mengatur hak akses. Backup JSON adalah salinan tambahan yang dapat kamu simpan secara berkala.</p><span><i /> Koneksi database aktif</span></section>
+            </div>
+          </>}
+ 
           {activeView === "team" && <>
             <div className="page-heading compact-heading"><div><div className="eyebrow">WORK BETTER TOGETHER</div><h1>Team & <em>access.</em></h1><p>Manage people and invitations for this workspace.</p></div><span className="workspace-type-badge">{activeWorkspace?.workspace_type === "team" ? "⌘ Team workspace" : "◒ Personal workspace"}</span></div>
             <div className="team-grid">
@@ -758,7 +909,7 @@ export default function Home() {
         <footer className="app-footer"><span>HUB WORKSPACE</span><span>Personal focus. Shared momentum.</span><span>v1.0</span></footer>
       </main>
 
-      <nav className="mobile-nav">{navItems.filter((item) => item.id !== "users" || isAppAdmin || isPlatformAdmin).map((item) => <button key={item.id} className={activeView === item.id ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.label.replace("My ", "")}</small></button>)}</nav>
+      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.id === "overview" ? "Home" : item.id === "tasks" ? "Tugas" : item.id === "calendar" ? "Kalender" : item.id === "board" ? "Kanban" : item.id === "notes" ? "Catatan" : "Pengaturan"}</small></button>)}</nav>
 
       {showTaskModal && <Modal title={editingTaskId ? "Edit task" : "Create a task"} subtitle="Keep the owner, timing, and next action clear." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Person in charge<select value={taskForm.assigned_to} onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</option>)}</select></label><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label></div><div className="form-two"><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label><label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></label></div><label>Progress <span className="form-hint">{taskForm.progress}% complete</span><input type="range" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Number(e.target.value) })} /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowTaskModal(false); setEditingTaskId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingTaskId ? "Save changes ↗" : "Create task ↗"}</button></div></form></Modal>}
 
