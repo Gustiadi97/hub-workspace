@@ -62,7 +62,15 @@ Database migrations applied to the connected project are recorded in Supabase mi
 
 ## Auth configuration
 
-In Supabase Authentication settings, set the Site URL to the deployed app URL and add the deployed URL plus the local development URL to the allowed redirect URLs. Email confirmation can remain enabled; new users should confirm their email before signing in.
+Open Supabase Dashboard → Authentication → URL Configuration:
+
+- Set **Site URL** to `https://hub-workspace-gustiadi97.vercel.app`.
+- Add `https://*-gustiadi97.vercel.app/**` to **Redirect URLs** so production and Vercel preview deployments can return to the app.
+- Add `http://localhost:3000/**` for local development.
+
+The sign-up form sends the current app origin as `emailRedirectTo`, so the deployed origin must be present in the Redirect URLs allow list. Email confirmation can remain enabled; new users should confirm their email before signing in.
+
+The app's canonical production alias is `https://hub-workspace-gustiadi97.vercel.app`.
 
 ## First administrator
 
