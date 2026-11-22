@@ -697,6 +697,10 @@ export default function Home() {
       flash("Nama tampilan harus 2–100 karakter.");
       return;
     }
+    if (!myHubCodeDraft) {
+      flash("Pilih HUB untuk profil pengguna.", "error");
+      return;
+    }
     if (fullName === profileName && myHubCodeDraft === myHubCode) {
       flash("Tidak ada perubahan pada profil.", "info");
       return;
@@ -1150,12 +1154,13 @@ export default function Home() {
             <section className="panel-card table-card">
               <div className="task-list-heading"><div><b>Daftar seluruh pekerjaan</b><span>{visibleTasks.length} tugas ditemukan</span></div><span className="table-info">Klik Edit untuk memperbarui data tugas</span></div>
               {visibleTasks.length === 0 ? <EmptyState title="Belum ada tugas pada filter ini." detail="Tambahkan pekerjaan atau ubah filter pencarian." action="＋ Input Task" onClick={() => openTaskEditor()} /> :
-                <div className="task-table-wrap"><table className="task-table office-task-table"><thead><tr><th>Tanggal</th><th>Deadline</th><th>Kategori</th><th>Divisi</th><th>Tugas</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
+                <div className="task-table-wrap"><table className="task-table office-task-table"><thead><tr><th>Tanggal</th><th>Deadline</th><th>Kategori</th><th>Divisi</th><th>HUB</th><th>Tugas</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
                   {visibleTasks.map((task) => <tr key={task.id}>
                     <td className="date-cell">{dateLabel(task.start_date || task.created_at.slice(0,10))}</td>
                     <td className="date-cell">{dateLabel(task.due_date)}</td>
                     <td><span className="category-tag">{task.category || "Tanpa kategori"}</span></td>
                     <td><div className="task-division-tags">{(task.division_ids ?? []).map((id) => divisions.find((division) => division.id === id)).filter(Boolean).map((division) => <span key={division!.id}>{division!.name}</span>)}</div></td>
+                    <td><div className="task-hub-tags">{(task.hub_codes ?? []).map((code) => <span key={code}>{code}</span>)}{!(task.hub_codes ?? []).length && <small>Umum</small>}</div></td>
                     <td><div className="table-task-title"><b>{task.title}</b><span>{task.description || "Tidak ada keterangan"}</span></div></td>
                     <td><span className="pic-name">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? (task.assigned_to === user?.id ? profileName : "Belum ditentukan")}</span></td>
                     <td><span className={`priority-text ${task.priority}`}>{priorityMeta[task.priority].label}</span></td>
@@ -1201,12 +1206,13 @@ export default function Home() {
               <div className="profile-settings-copy"><div className="eyebrow">PROFIL SAYA</div><h3>Nama Tampilan</h3><p>Nama ini akan terlihat pada daftar PIC dan setiap pesan update tugas.</p></div>
               <form className="profile-settings-form" onSubmit={saveMyProfileName}>
                 <label>Nama pengguna<input value={profileNameDraft} onChange={(e) => setProfileNameDraft(e.target.value)} minLength={2} maxLength={100} required /></label>
+                <label>HUB Saya<select value={myHubCodeDraft} onChange={(e) => setMyHubCodeDraft(e.target.value)} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
                 <label>ID Login<input value={loginId.toUpperCase()} readOnly /></label>
                 <button className="primary-button" disabled={savingProfileName || profileNameDraft.trim() === profileName}>{savingProfileName ? "Menyimpan…" : "Simpan Nama"}</button>
               </form>
             </section>
             {(isAppAdmin || isPlatformAdmin) && <>
-              <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Manajemen Pengguna</h2><p>Tambah akun dan tentukan hak aksesnya sekaligus.</p></div><button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" }); setShowAccountModal(true); }}>＋ Tambah Akun / Pengguna</button></div>
+              <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Manajemen Pengguna</h2><p>Tambah akun dan tentukan hak aksesnya sekaligus.</p></div><button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member", hubCode: "" }); setShowAccountModal(true); }}>＋ Tambah Akun / Pengguna</button></div>
               <div className="stats-grid account-stats">
                 <StatCard label="Total akun" value={accounts.length} detail="Akun terdaftar" icon="♙" />
                 <StatCard label="Akun aktif" value={accounts.filter((account) => account.is_active).length} detail="Dapat login" icon="✓" accent="green" />
@@ -1216,10 +1222,11 @@ export default function Home() {
               <section className="panel-card table-card account-table-card">
                 <div className="section-head account-table-head"><div><div className="eyebrow">USER DIRECTORY</div><h3>Daftar akun pengguna</h3></div><span className="subtle-count">{accounts.length} akun</span></div>
                 {accounts.length === 0 ? <EmptyState title="Belum ada akun tambahan." detail="Tambahkan pengguna pertama ke workspace utama." action="＋ Tambah Pengguna" onClick={() => setShowAccountModal(true)} /> :
-                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>Role Aplikasi</th><th>Akses Workspace</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
+                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>HUB</th><th>Role Aplikasi</th><th>Akses Workspace</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
                     {accounts.map((account) => <tr key={account.user_id}>
                       <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin aplikasi" : "User"}</span></div></div></td>
                       <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
+                      <td><span className="hub-code-pill">{account.hub_code || "Belum diatur"}</span></td>
                       <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : <span className="role-pill">{account.account_role === "admin" ? "Admin aplikasi" : "User"}</span>}</td>
                       <td><span className="role-pill">{account.workspace_role || "Belum diberi akses"}</span></td>
                       <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
@@ -1271,6 +1278,7 @@ export default function Home() {
             <label>Kategori<select value={taskForm.category} onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}>{categories.map((category) => <option key={category.id} value={category.name}>{category.name}</option>)}</select></label>
             <label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Rendah</option><option value="medium">Medium</option><option value="high">Tinggi</option><option value="urgent">Urgent</option></select></label>
             <div className="task-division-picker task-field-wide-four"><span>Divisi <small>(bisa pilih lebih dari satu)</small></span><div>{divisions.map((division) => <label key={division.id} className={taskForm.division_ids.includes(division.id) ? "division-option selected" : "division-option"}><input type="checkbox" checked={taskForm.division_ids.includes(division.id)} onChange={(e) => setTaskForm({ ...taskForm, division_ids: e.target.checked ? [...taskForm.division_ids, division.id] : taskForm.division_ids.filter((id) => id !== division.id) })} /><i style={{ background: division.color }} />{division.name}</label>)}{divisions.length === 0 && <small>Tambahkan master divisi melalui Pengaturan.</small>}</div></div>
+            <div className="task-hub-picker task-field-wide-four"><span>HUB Tujuan <small>(anggota HUB yang dipilih akan menerima notifikasi)</small></span><div>{hubs.map((hub) => <label key={hub.hub_code} className={taskForm.hub_codes.includes(hub.hub_code) ? "hub-option selected" : "hub-option"}><input type="checkbox" checked={taskForm.hub_codes.includes(hub.hub_code)} onChange={(e) => setTaskForm({ ...taskForm, hub_codes: e.target.checked ? [...taskForm.hub_codes, hub.hub_code] : taskForm.hub_codes.filter((code) => code !== hub.hub_code) })} /><i style={{ background: hub.color }} />{hub.hub_code}</label>)}{hubs.length === 0 && <small>Belum ada master HUB. Tambahkan melalui Pengaturan.</small>}</div></div>
             <label className="task-field-wide-three">Rencana / Kegiatan<textarea autoFocus rows={3} value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Contoh: Membuat laporan mingguan, follow up data supplier, menyiapkan materi meeting…" required /></label>
             <label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">Belum Mulai</option><option value="in_progress">Sedang Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
             <label>Progress (%)<input type="number" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} /></label>
@@ -1341,6 +1349,7 @@ export default function Home() {
         <form className="modal-form account-manage-form" onSubmit={saveManagedAccount}>
           <div className="account-manage-warning"><b>Pengaturan akun</b><span>Perubahan nama, hak akses, dan password akan langsung berlaku setelah disimpan.</span></div>
           <label>Nama lengkap<input autoFocus value={accountManageForm.fullName} onChange={(e) => setAccountManageForm({ ...accountManageForm, fullName: e.target.value })} minLength={2} maxLength={100} required /></label>
+          <label>HUB Pengguna<select value={accountManageForm.hubCode} onChange={(e) => setAccountManageForm({ ...accountManageForm, hubCode: e.target.value })} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
           <label>Akses workspace utama<select value={accountManageForm.workspaceRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label>
           {isPlatformAdmin && <label>Role aplikasi<select value={accountManageForm.accountRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, accountRole: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
           <label>Password baru <span className="optional-field">(opsional)</span><input type="password" value={accountManageForm.password} onChange={(e) => setAccountManageForm({ ...accountManageForm, password: e.target.value })} placeholder="Kosongkan jika tidak ingin mengubah password" minLength={8} maxLength={128} autoComplete="new-password" /></label>
@@ -1355,9 +1364,10 @@ export default function Home() {
             <label>Nama lengkap<input value={accountForm.fullName} onChange={(e) => setAccountForm({ ...accountForm, fullName: e.target.value })} placeholder="Nama pengguna" required /></label>
           </div>
           <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
+          <label>HUB Pengguna<select value={accountForm.hubCode} onChange={(e) => setAccountForm({ ...accountForm, hubCode: e.target.value })} required><option value="">Pilih HUB pengguna</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
           <label>Role akses workspace<select value={accountForm.workspaceRole} onChange={(e) => setAccountForm({ ...accountForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label>
           {isPlatformAdmin && <label>Role aplikasi<select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
-          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>HUB WORKSPACE · {accountForm.workspaceRole}</span><small>Pengguna dapat langsung melihat workspace ini setelah login menggunakan ID dan password.</small></div>
+          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>HUB {accountForm.hubCode || "BELUM DIPILIH"} · {accountForm.workspaceRole}</span><small>Pengguna akan menerima notifikasi untuk tugas yang ditujukan ke HUB yang dipilih.</small></div>
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy}>Simpan Akun & Akses ↗</button></div>
         </form>
       </Modal>}
