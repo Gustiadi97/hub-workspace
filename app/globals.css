@@ -1858,3 +1858,89 @@ html, body { background: #f5f7f3; color: #173f3b; }
   .profile-settings-form input { height: 35px; font-size: 9px; padding: 7px 8px; }
   .profile-settings-form .primary-button { grid-column: 1/-1; width: 100%; }
 }
+
+
+/* Clear account management actions and explicit logout controls */
+.account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; min-width: 150px; }
+.account-action-button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font: 700 10px/1.2 var(--font-ui);
+  white-space: nowrap;
+  transition: background .15s,border-color .15s,transform .15s;
+}
+.account-action-button > span { font-size: 13px; line-height: 1; }
+.account-action-button:hover { transform: translateY(-1px); }
+.account-action-button.manage {
+  color: #276d55;
+  background: #edf5e9;
+  border-color: #dbe9d8;
+}
+.account-action-button.manage:hover { background: #e0efdf; border-color: #c9dfc9; }
+.account-action-button.delete {
+  color: #b24f49;
+  background: #fff1ee;
+  border-color: #f0d9d5;
+}
+.account-action-button.delete:hover { background: #ffe6e1; border-color: #e9c5bf; }
+.account-manage-form { gap: 13px; }
+.account-manage-warning {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 11px 12px; border: 1px solid #e4ebdf; border-radius: 8px;
+  background: #f5f8f1;
+}
+.account-manage-warning b { color: #3b7157; font-size: 11px; }
+.account-manage-warning span { color: #82968a; font-size: 9px; line-height: 1.5; }
+.account-manage-form label { display: flex; flex-direction: column; gap: 6px; color: #5d7b6d; font-size: 10px; font-weight: 800; }
+.account-manage-form input, .account-manage-form select {
+  width: 100%; min-height: 39px; padding: 9px 10px;
+  border: 1px solid #dfe8dc; border-radius: 7px;
+  color: #315b4c; background: #fffefa; outline: none; font: 500 11px var(--font-ui);
+}
+.account-manage-form input:focus, .account-manage-form select:focus {
+  border-color: #7eaa8a; box-shadow: 0 0 0 3px rgba(64,130,83,.1);
+}
+.optional-field { color: #98a89d; font-size: 9px; font-weight: 500; }
+.logout-button {
+  min-height: 35px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid #ead8d3;
+  border-radius: 8px;
+  color: #a94f48;
+  background: #fff8f6;
+  font: 800 10px/1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .15s,border-color .15s,transform .15s;
+}
+.logout-button > span { font-size: 15px; line-height: 1; }
+.logout-button:hover { background: #ffebe6; border-color: #e5bdb5; transform: translateY(-1px); }
+.logout-button:focus-visible, .account-action-button:focus-visible {
+  outline: 3px solid rgba(36,120,95,.25); outline-offset: 2px;
+}
+.topbar-right { display: flex; align-items: center; gap: 11px; }
+.topbar-logout { margin-left: 2px; }
+.mobile-logout-button { display: none; }
+@media(max-width:820px) {
+  .account-actions { gap: 5px; }
+  .account-action-button { min-height: 30px; padding: 6px 8px; font-size: 9px; }
+  .logout-button { min-height: 33px; padding: 7px 10px; font-size: 9px; }
+}
+@media(max-width:600px) {
+  .account-actions { min-width: 0; gap: 6px; }
+  .account-action-button { min-height: 32px; padding: 7px 9px; font-size: 9px; }
+  .topbar-logout { display: none; }
+  .mobile-logout-button { display: inline-flex; min-height: 32px; padding: 7px 10px; }
+  .mobile-page-heading .mobile-logout-button { margin-left: auto; }
+}
