@@ -1382,7 +1382,7 @@ export default function Home() {
           <div className="account-manage-warning"><b>Pengaturan akun</b><span>Perubahan nama, hak akses, dan password akan langsung berlaku setelah disimpan.</span></div>
           <label>Nama lengkap<input autoFocus value={accountManageForm.fullName} onChange={(e) => setAccountManageForm({ ...accountManageForm, fullName: e.target.value })} minLength={2} maxLength={100} required /></label>
           <label>Akses<select value={accountManageForm.accessRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, accessRole: e.target.value })}>
-            {isPlatformAdmin && <option value="admin">Admin — akses semua HUB & kelola pengguna</option>}
+            {(isPlatformAdmin || accountManageForm.accessRole === "admin") && <option value="admin" disabled={!isPlatformAdmin}>Admin — akses semua HUB & kelola pengguna</option>}
             <option value="member">Member — mengerjakan tugas di HUB</option>
             <option value="viewer">Viewer — hanya melihat</option>
           </select></label>
