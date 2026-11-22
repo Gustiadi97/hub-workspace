@@ -92,6 +92,8 @@ export default function Home() {
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profileName, setProfileName] = useState("");
+  const [profileNameDraft, setProfileNameDraft] = useState("");
+  const [savingProfileName, setSavingProfileName] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
   const [workspaceRole, setWorkspaceRole] = useState("owner");
@@ -185,7 +187,9 @@ export default function Home() {
       throw new Error("Akun tidak aktif atau belum didaftarkan oleh Admin HUB WORKSPACE.");
     }
     setLoginId(accountInfo.login_id);
-    setProfileName(accountInfo.display_name || account.user_metadata?.full_name || accountInfo.login_id);
+    const resolvedDisplayName = accountInfo.display_name || account.user_metadata?.full_name || accountInfo.login_id;
+    setProfileName(resolvedDisplayName);
+    setProfileNameDraft(resolvedDisplayName);
     setIsAppAdmin(accountInfo.account_role === "admin");
     const { data: spaceData, error: spaceError } = await client.from("hw_workspaces").select("id,name,workspace_type,owner_id,description").order("created_at", { ascending: true });
     if (spaceError) throw spaceError;
@@ -230,6 +234,7 @@ export default function Home() {
       if (event === "SIGNED_OUT" || !session?.user) {
         setUser(null);
         setProfileName("");
+        setProfileNameDraft("");
         setWorkspaces([]);
         setWorkspaceId("");
         setTasks([]);
@@ -570,6 +575,32 @@ export default function Home() {
     if (error) throw new Error(data?.error || error.message || "Permintaan pengelolaan akun gagal.");
     if (data?.error) throw new Error(data.error);
     return data;
+  };
+
+  const saveMyProfileName = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const fullName = profileNameDraft.trim();
+    if (fullName.length < 2 || fullName.length > 100) {
+      flash("Nama tampilan harus 2–100 karakter.");
+      return;
+    }
+    if (fullName === profileName) {
+      flash("Nama tampilan belum berubah.");
+      return;
+    }
+    setSavingProfileName(true);
+    try {
+      await invokeAccountAdmin({ action: "self-update-profile", fullName });
+      setProfileName(fullName);
+      setProfileNameDraft(fullName);
+      setRefreshKey((value) => value + 1);
+      setTaskUpdateRefresh((value) => value + 1);
+      flash("Nama tampilan berhasil diperbarui.");
+    } catch (error) {
+      flash(messageFrom(error));
+    } finally {
+      setSavingProfileName(false);
+    }
   };
 
   const createAccount = async (event: FormEvent<HTMLFormElement>) => {
@@ -1009,6 +1040,15 @@ export default function Home() {
  
           {activeView === "settings" && <>
             <div className="page-heading compact-heading"><div><div className="eyebrow">PENGATURAN WORKSPACE</div><h1>Pengaturan <em>Master Data & Pengguna</em></h1><p>Workspace hanya satu. Kelola kategori, divisi, dan akun pengguna dari sini.</p></div></div>
+            <section className="panel-card profile-settings-card">
+              <div className="profile-settings-icon">☺</div>
+              <div className="profile-settings-copy"><div className="eyebrow">PROFIL SAYA</div><h3>Nama Tampilan</h3><p>Nama ini akan terlihat pada daftar PIC dan setiap pesan update tugas.</p></div>
+              <form className="profile-settings-form" onSubmit={saveMyProfileName}>
+                <label>Nama pengguna<input value={profileNameDraft} onChange={(e) => setProfileNameDraft(e.target.value)} minLength={2} maxLength={100} required /></label>
+                <label>ID Login<input value={loginId.toUpperCase()} readOnly /></label>
+                <button className="primary-button" disabled={savingProfileName || profileNameDraft.trim() === profileName}>{savingProfileName ? "Menyimpan…" : "Simpan Nama"}</button>
+              </form>
+            </section>
             {(isAppAdmin || isPlatformAdmin) && <>
               <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Manajemen Pengguna</h2><p>Tambah akun dan tentukan hak aksesnya sekaligus.</p></div><button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" }); setShowAccountModal(true); }}>＋ Tambah Akun / Pengguna</button></div>
               <div className="stats-grid account-stats">
@@ -1110,7 +1150,7 @@ export default function Home() {
               return <article className={mine ? "task-chat-message mine" : "task-chat-message"} key={item.id}>
                 {!mine && <div className="task-chat-avatar">{initials(item.author_name)}</div>}
                 <div className="task-chat-message-content">
-                  <div className="task-chat-meta"><b>{mine ? "Kamu" : item.author_name}</b><time>{timeLabel(item.created_at)}</time></div>
+                  <div className="task-chat-meta"><b>{mine ? profileName || loginId : item.author_name}</b><time>{timeLabel(item.created_at)}</time></div>
                   <div className="task-chat-bubble">
                     <p>{item.message}</p>
                     {(changedStatus || changedProgress || item.status_from === item.status_to) && <div className="task-chat-change">
