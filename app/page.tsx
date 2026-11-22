@@ -49,11 +49,11 @@ type Division = { id: string; name: string; color: string };
 type UserAccount = { user_id: string; login_id: string; display_name: string; account_role: "admin" | "user"; is_active: boolean; created_at: string; is_super_admin?: boolean; workspace_role?: string };
 
 const statusMeta = {
-  todo: { label: "To do", tone: "slate" },
-  in_progress: { label: "In progress", tone: "orange" },
-  waiting: { label: "Waiting", tone: "purple" },
-  done: { label: "Done", tone: "green" },
-  cancelled: { label: "Cancelled", tone: "slate" },
+  todo: { label: "Belum Mulai", tone: "slate" },
+  in_progress: { label: "Sedang Berjalan", tone: "orange" },
+  waiting: { label: "Menunggu", tone: "purple" },
+  done: { label: "Selesai", tone: "green" },
+  cancelled: { label: "Dibatalkan", tone: "slate" },
 } as const;
 const priorityMeta = {
   low: { label: "Low", tone: "slate" },
