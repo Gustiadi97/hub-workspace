@@ -145,9 +145,9 @@ export default function Home() {
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<UserAccount | null>(null);
-  const [accountManageForm, setAccountManageForm] = useState({ fullName: "", workspaceRole: "member", accountRole: "user", hubCode: "", password: "" });
+  const [accountManageForm, setAccountManageForm] = useState({ fullName: "", accessRole: "member", hubCode: "", password: "" });
   const [savingManagedAccount, setSavingManagedAccount] = useState(false);
-  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member", hubCode: "" });
+  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", accessRole: "member", hubCode: "" });
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", start_date: localDateKey(new Date()), due_date: "", category: "Operasional", division_ids: [] as string[], hub_codes: [] as string[], assigned_to: "", status: "todo", progress: 0 });
@@ -697,21 +697,22 @@ export default function Home() {
       flash("Nama tampilan harus 2–100 karakter.");
       return;
     }
-    if (!myHubCodeDraft) {
+    if (!isAppAdmin && !isPlatformAdmin && !myHubCodeDraft) {
       flash("Pilih HUB untuk profil pengguna.", "error");
       return;
     }
-    if (fullName === profileName && myHubCodeDraft === myHubCode) {
+    const nextHubCode = isAppAdmin || isPlatformAdmin ? "" : myHubCodeDraft;
+    if (fullName === profileName && nextHubCode === myHubCode) {
       flash("Tidak ada perubahan pada profil.", "info");
       return;
     }
     setSavingProfileName(true);
     try {
-      if (!myHubCodeDraft) throw new Error("Pilih HUB untuk profil pengguna.");
-      await invokeAccountAdmin({ action: "self-update-profile", fullName, hubCode: myHubCodeDraft });
+      await invokeAccountAdmin({ action: "self-update-profile", fullName, hubCode: nextHubCode });
       setProfileName(fullName);
       setProfileNameDraft(fullName);
-      setMyHubCode(myHubCodeDraft);
+      setMyHubCode(nextHubCode);
+      setMyHubCodeDraft(nextHubCode);
       setRefreshKey((value) => value + 1);
       setTaskUpdateRefresh((value) => value + 1);
       flash("Profil pengguna berhasil diperbarui.");
@@ -731,13 +732,12 @@ export default function Home() {
         loginId: accountForm.loginId.trim().toLowerCase().replace(/\s+/g, ""),
         fullName: accountForm.fullName.trim(),
         password: accountForm.password,
-        role: isPlatformAdmin ? accountForm.role : "user",
-        workspaceRole: accountForm.workspaceRole,
-        hubCode: accountForm.hubCode,
+        accessRole: accountForm.accessRole,
+        hubCode: accountForm.accessRole === "admin" ? "" : accountForm.hubCode,
       };
       await invokeAccountAdmin(payload);
       setShowAccountModal(false);
-      setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member", hubCode: "" });
+      setAccountForm({ loginId: "", fullName: "", password: "", accessRole: "member", hubCode: "" });
       setRefreshKey((value) => value + 1);
       flash("Akun berhasil dibuat dan langsung diberi akses workspace.");
     } catch (error) { flash(messageFrom(error)); }
@@ -749,8 +749,7 @@ export default function Home() {
     setEditingAccount(account);
     setAccountManageForm({
       fullName: account.display_name,
-      workspaceRole: ["admin", "member", "viewer"].includes(account.workspace_role || "") ? account.workspace_role! : "member",
-      accountRole: account.account_role,
+      accessRole: account.account_role === "admin" ? "admin" : account.workspace_role === "viewer" ? "viewer" : "member",
       hubCode: account.hub_code || "",
       password: "",
     });
@@ -774,10 +773,9 @@ export default function Home() {
         action: "update-account",
         userId: editingAccount.user_id,
         fullName,
-        workspaceRole: accountManageForm.workspaceRole,
-        hubCode: accountManageForm.hubCode,
+        accessRole: accountManageForm.accessRole,
+        hubCode: accountManageForm.accessRole === "admin" ? "" : accountManageForm.hubCode,
       };
-      if (isPlatformAdmin) payload.accountRole = accountManageForm.accountRole;
       if (accountManageForm.password) payload.password = accountManageForm.password;
       await invokeAccountAdmin(payload);
       setEditingAccount(null);
@@ -1229,13 +1227,15 @@ export default function Home() {
               <div className="profile-settings-copy"><div className="eyebrow">PROFIL SAYA</div><h3>Nama Tampilan</h3><p>Nama ini akan terlihat pada daftar PIC dan setiap pesan update tugas.</p></div>
               <form className="profile-settings-form" onSubmit={saveMyProfileName}>
                 <label>Nama pengguna<input value={profileNameDraft} onChange={(e) => setProfileNameDraft(e.target.value)} minLength={2} maxLength={100} required /></label>
-                <label>HUB Saya<select value={myHubCodeDraft} onChange={(e) => setMyHubCodeDraft(e.target.value)} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
+                {isAppAdmin || isPlatformAdmin
+                  ? <label>Jangkauan HUB<input value="Semua HUB (Admin)" readOnly /></label>
+                  : <label>HUB Saya<select value={myHubCodeDraft} onChange={(e) => setMyHubCodeDraft(e.target.value)} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>}
                 <label>ID Login<input value={loginId.toUpperCase()} readOnly /></label>
-                <button className="primary-button" disabled={savingProfileName || (profileNameDraft.trim() === profileName && myHubCodeDraft === myHubCode)}>{savingProfileName ? "Menyimpan…" : "Simpan Profil"}</button>
+                <button className="primary-button" disabled={savingProfileName || (profileNameDraft.trim() === profileName && ((isAppAdmin || isPlatformAdmin) || myHubCodeDraft === myHubCode))}>{savingProfileName ? "Menyimpan…" : "Simpan Profil"}</button>
               </form>
             </section>
             {(isAppAdmin || isPlatformAdmin) && <>
-              <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Manajemen Pengguna</h2><p>Tambah akun dan tentukan hak aksesnya sekaligus.</p></div><button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member", hubCode: "" }); setShowAccountModal(true); }}>＋ Tambah Akun / Pengguna</button></div>
+              <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Manajemen Pengguna</h2><p>Tambah akun dan tentukan hak aksesnya sekaligus.</p></div><button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", accessRole: "member", hubCode: "" }); setShowAccountModal(true); }}>＋ Tambah Akun / Pengguna</button></div>
               <div className="stats-grid account-stats">
                 <StatCard label="Total akun" value={accounts.length} detail="Akun terdaftar" icon="♙" />
                 <StatCard label="Akun aktif" value={accounts.filter((account) => account.is_active).length} detail="Dapat login" icon="✓" accent="green" />
@@ -1245,13 +1245,12 @@ export default function Home() {
               <section className="panel-card table-card account-table-card">
                 <div className="section-head account-table-head"><div><div className="eyebrow">USER DIRECTORY</div><h3>Daftar akun pengguna</h3></div><span className="subtle-count">{accounts.length} akun</span></div>
                 {accounts.length === 0 ? <EmptyState title="Belum ada akun tambahan." detail="Tambahkan pengguna pertama ke workspace utama." action="＋ Tambah Pengguna" onClick={() => setShowAccountModal(true)} /> :
-                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>HUB</th><th>Role Aplikasi</th><th>Akses Workspace</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
+                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>HUB</th><th>Akses</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
                     {accounts.map((account) => <tr key={account.user_id}>
-                      <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin aplikasi" : "User"}</span></div></div></td>
+                      <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin · Semua HUB" : account.workspace_role === "viewer" ? "Viewer" : "Member"}</span></div></div></td>
                       <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
-                      <td><span className="hub-code-pill">{account.hub_code || "Belum diatur"}</span></td>
-                      <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : <span className="role-pill">{account.account_role === "admin" ? "Admin aplikasi" : "User"}</span>}</td>
-                      <td><span className="role-pill">{account.workspace_role || "Belum diberi akses"}</span></td>
+                      <td><span className="hub-code-pill">{account.account_role === "admin" || account.is_super_admin ? "Semua HUB" : account.hub_code || "Belum diatur"}</span></td>
+                      <td><span className={account.account_role === "admin" || account.is_super_admin ? "role-pill owner" : "role-pill"}>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin" : account.workspace_role === "viewer" ? "Viewer" : "Member"}</span></td>
                       <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
                       <td className="date-cell">{dateLabel(account.created_at.slice(0, 10))}</td>
                       <td><div className="account-actions">{!account.is_super_admin && account.user_id !== user?.id && <><button type="button" className="account-action-button manage" onClick={() => openAccountManager(account)}><span>✎</span> Kelola</button><button type="button" className="account-action-button delete" onClick={() => deleteManagedAccount(account)}><span>×</span> Hapus</button></>}</div></td>
@@ -1382,9 +1381,13 @@ export default function Home() {
         <form className="modal-form account-manage-form" onSubmit={saveManagedAccount}>
           <div className="account-manage-warning"><b>Pengaturan akun</b><span>Perubahan nama, hak akses, dan password akan langsung berlaku setelah disimpan.</span></div>
           <label>Nama lengkap<input autoFocus value={accountManageForm.fullName} onChange={(e) => setAccountManageForm({ ...accountManageForm, fullName: e.target.value })} minLength={2} maxLength={100} required /></label>
-          <label>HUB Pengguna<select value={accountManageForm.hubCode} onChange={(e) => setAccountManageForm({ ...accountManageForm, hubCode: e.target.value })} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
-          <label>Akses workspace utama<select value={accountManageForm.workspaceRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label>
-          {isPlatformAdmin && <label>Role aplikasi<select value={accountManageForm.accountRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, accountRole: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
+          <label>Akses<select value={accountManageForm.accessRole} onChange={(e) => setAccountManageForm({ ...accountManageForm, accessRole: e.target.value })}>
+            {isPlatformAdmin && <option value="admin">Admin — akses semua HUB & kelola pengguna</option>}
+            <option value="member">Member — mengerjakan tugas di HUB</option>
+            <option value="viewer">Viewer — hanya melihat</option>
+          </select></label>
+          {accountManageForm.accessRole !== "admin" && <label>HUB Pengguna<select value={accountManageForm.hubCode} onChange={(e) => setAccountManageForm({ ...accountManageForm, hubCode: e.target.value })} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>}
+          {accountManageForm.accessRole === "admin" && <div className="account-access-preview"><b>Jangkauan akses</b><span>Semua HUB</span><small>Admin otomatis menerima notifikasi tugas dan update dari seluruh HUB.</small></div>}
           <label>Password baru <span className="optional-field">(opsional)</span><input type="password" value={accountManageForm.password} onChange={(e) => setAccountManageForm({ ...accountManageForm, password: e.target.value })} placeholder="Kosongkan jika tidak ingin mengubah password" minLength={8} maxLength={128} autoComplete="new-password" /></label>
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setEditingAccount(null)}>Batal</button><button className="primary-button" disabled={savingManagedAccount}>{savingManagedAccount ? "Menyimpan…" : "Simpan Perubahan"}</button></div>
         </form>
@@ -1397,10 +1400,14 @@ export default function Home() {
             <label>Nama lengkap<input value={accountForm.fullName} onChange={(e) => setAccountForm({ ...accountForm, fullName: e.target.value })} placeholder="Nama pengguna" required /></label>
           </div>
           <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
-          <label>HUB Pengguna<select value={accountForm.hubCode} onChange={(e) => setAccountForm({ ...accountForm, hubCode: e.target.value })} required><option value="">Pilih HUB pengguna</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
-          <label>Role akses workspace<select value={accountForm.workspaceRole} onChange={(e) => setAccountForm({ ...accountForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label>
-          {isPlatformAdmin && <label>Role aplikasi<select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
-          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>HUB {accountForm.hubCode || "BELUM DIPILIH"} · {accountForm.workspaceRole}</span><small>Pengguna akan menerima notifikasi untuk tugas yang ditujukan ke HUB yang dipilih.</small></div>
+          <label>Akses<select value={accountForm.accessRole} onChange={(e) => setAccountForm({ ...accountForm, accessRole: e.target.value, hubCode: e.target.value === "admin" ? "" : accountForm.hubCode })}>
+            {isPlatformAdmin && <option value="admin">Admin — akses semua HUB & kelola pengguna</option>}
+            <option value="member">Member — mengerjakan tugas di HUB</option>
+            <option value="viewer">Viewer — hanya melihat</option>
+          </select></label>
+          {accountForm.accessRole !== "admin" && <label>HUB Pengguna<select value={accountForm.hubCode} onChange={(e) => setAccountForm({ ...accountForm, hubCode: e.target.value })} required><option value="">Pilih HUB pengguna</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>}
+          {accountForm.accessRole === "admin" && <div className="account-access-preview"><b>Jangkauan akses</b><span>Semua HUB</span><small>Admin menerima notifikasi tugas baru dan update dari seluruh HUB.</small></div>}
+          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>{accountForm.accessRole === "admin" ? "ADMIN · SEMUA HUB" : `HUB ${accountForm.hubCode || "BELUM DIPILIH"} · ${accountForm.accessRole.toUpperCase()}`}</span><small>{accountForm.accessRole === "admin" ? "Admin memiliki akses ke seluruh HUB dan notifikasi lintas HUB." : "Pengguna akan menerima notifikasi untuk tugas yang ditujukan ke HUB yang dipilih."}</small></div>
           <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy}>Simpan Akun & Akses ↗</button></div>
         </form>
       </Modal>}
