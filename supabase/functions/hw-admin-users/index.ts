@@ -256,8 +256,17 @@ Deno.serve(async (req) => {
         : await adminClient.from("hw_workspace_members").insert({ workspace_id: mainWorkspace.id, user_id: targetUserId, role: workspaceRole });
       if (membershipResult.error) return json({ error: membershipResult.error.message }, 400);
 
+      const { data: targetAuthResult, error: targetAuthReadError } = await adminClient.auth.admin.getUserById(targetUserId);
+      if (targetAuthReadError || !targetAuthResult.user) {
+        return json({ error: "Data autentikasi pengguna tidak dapat dibaca." }, 400);
+      }
       const authChanges: Record<string, unknown> = {
-        user_metadata: { ...(targetAccount ? {} : {}), full_name: fullName, login_id: targetAccount.login_id, auth_mode: "username" },
+        user_metadata: {
+          ...(targetAuthResult.user.user_metadata || {}),
+          full_name: fullName,
+          login_id: targetAccount.login_id,
+          auth_mode: "username",
+        },
       };
       if (password) authChanges.password = password;
       const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(targetUserId, authChanges);
@@ -267,6 +276,9 @@ Deno.serve(async (req) => {
     }
 
     if (action === "delete-account") {
+      if (targetAccount.account_role === "admin" && !isSuperAdmin) {
+        return json({ error: "Hanya Super Admin yang dapat menghapus akun Admin aplikasi." }, 403);
+      }
       const { data: ownedWorkspace, error: ownerCheckError } = await adminClient
         .from("hw_workspaces").select("id").eq("owner_id", targetUserId).limit(1).maybeSingle();
       if (ownerCheckError) return json({ error: ownerCheckError.message }, 400);
