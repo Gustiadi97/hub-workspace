@@ -934,3 +934,136 @@ body { font-family: "DM Sans", Arial, sans-serif; }
   body, .app-shell { background: white; }
   .panel-card, .stat-card { box-shadow: none; break-inside: avoid; }
 }
+
+
+/* Task entry form and combined workspace access management */
+.task-modal {
+  width: min(100%, 940px);
+  max-height: min(94vh, 860px);
+  padding: 25px 27px 23px;
+  border-radius: 15px;
+}
+.task-modal .modal-head { margin-bottom: 18px; align-items: flex-start; }
+.task-modal .modal-head h2 { color: #204e43; font-size: 21px; margin: 5px 0 4px; }
+.task-modal .modal-head p { color: #829b90; font-size: 9px; }
+.task-modal .close-button { width: auto; height: 29px; padding: 0 11px; background: #eef6f0; color: #26745c; font-size: 0; }
+.task-modal .close-button::after { content: "Tutup"; font-size: 9px; font-weight: 800; }
+.task-entry-form { display: flex; flex-direction: column; gap: 15px; }
+.task-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 13px 14px;
+  align-items: start;
+}
+.task-entry-grid > label,
+.account-entry-form label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #4f7468;
+  font-size: 9px;
+  font-weight: 800;
+}
+.task-entry-grid input,
+.task-entry-grid select,
+.task-entry-grid textarea,
+.account-entry-form input,
+.account-entry-form select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #dcebe3;
+  background: #fbfdfb;
+  color: #31594e;
+  border-radius: 7px;
+  min-height: 36px;
+  padding: 9px 10px;
+  outline: none;
+  font-size: 9px;
+  font-weight: 500;
+  transition: border .15s, box-shadow .15s, background .15s;
+}
+.task-entry-grid textarea { min-height: 83px; line-height: 1.5; resize: vertical; }
+.task-entry-grid input:focus,
+.task-entry-grid select:focus,
+.task-entry-grid textarea:focus,
+.account-entry-form input:focus,
+.account-entry-form select:focus {
+  border-color: #53a78c;
+  background: white;
+  box-shadow: 0 0 0 3px rgba(57,150,117,.1);
+}
+.task-field-wide-three { grid-column: span 3; }
+.task-field-wide-two { grid-column: span 2; }
+.task-entry-actions { display: flex; align-items: center; gap: 8px; padding-top: 1px; }
+.task-entry-actions .primary-button { min-width: 116px; }
+.task-entry-actions .secondary-button { min-width: 126px; }
+
+.access-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 18px;
+  margin: 25px 0 13px;
+}
+.access-section-heading h2 { color: #204e43; font: 800 20px Manrope,sans-serif; letter-spacing: -.035em; margin: 5px 0 4px; }
+.access-section-heading p { color: #829a90; font-size: 9px; line-height: 1.5; margin: 0; }
+.access-section-heading .primary-button { flex: 0 0 auto; }
+.access-layout { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(250px,.75fr); gap: 12px; align-items: start; }
+.active-workspace-strip {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: -2px 0 9px; padding: 9px 10px; background: #f0f8f2; border: 1px solid #e2eee6; border-radius: 7px;
+}
+.active-workspace-strip b { font-size: 9px; color: #386b58; }
+.active-workspace-strip span { font-size: 8px; color: #86a195; }
+.workspace-invite-area { border-top: 1px solid #edf3ef; margin-top: 14px; padding-top: 13px; }
+.workspace-invite-area .section-head { margin-bottom: 10px; }
+.workspace-invite-area .section-head h3 { font-size: 11px; }
+.workspace-invite-area .invite-form { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 8px; }
+.workspace-invite-area .invite-form label { min-width: 0; font-size: 8px; }
+.workspace-invite-area .invite-form input,
+.workspace-invite-area .invite-form select { font-size: 9px; padding: 9px; }
+.workspace-invite-area .full-button { width: auto; min-height: 35px; margin: 0; white-space: nowrap; }
+.account-heading { margin-top: 28px; align-items: flex-end; }
+.account-heading h2 { font-size: 18px; }
+.account-stats { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.account-entry-form { gap: 13px; }
+.account-entry-form .form-two { align-items: start; }
+.account-access-preview {
+  display: flex; flex-direction: column; gap: 4px; background: #f0f8f2;
+  border: 1px solid #dfede4; border-radius: 8px; padding: 11px 12px;
+}
+.account-access-preview b { font-size: 9px; color: #3e705d; }
+.account-access-preview span { color: #236d57; font-size: 10px; font-weight: 800; }
+.account-access-preview small { color: #89a094; font-size: 8px; line-height: 1.5; }
+.settings-note { margin-top: 12px; }
+@media (max-width: 900px) {
+  .task-modal { width: min(100%, 760px); padding: 20px; }
+  .task-entry-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .task-field-wide-three { grid-column: span 2; }
+  .task-field-wide-two { grid-column: span 2; }
+  .access-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .task-modal { width: 100%; max-height: 92vh; padding: 17px 15px 16px; border-radius: 15px 15px 8px 8px; }
+  .task-modal .modal-head { margin-bottom: 13px; }
+  .task-entry-form { gap: 12px; }
+  .task-entry-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px 9px; }
+  .task-entry-grid > label { font-size: 8px; }
+  .task-entry-grid input, .task-entry-grid select, .task-entry-grid textarea { min-height: 35px; padding: 8px; font-size: 8px; }
+  .task-entry-grid textarea { min-height: 78px; }
+  .task-field-wide-three { grid-column: 1/-1; }
+  .task-field-wide-two { grid-column: 1/-1; }
+  .task-entry-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .task-entry-actions button { width: 100%; min-width: 0; font-size: 8px; padding: 9px 8px; }
+  .access-section-heading { align-items: flex-start; flex-direction: column; gap: 10px; margin: 20px 0 10px; }
+  .access-section-heading h2 { font-size: 17px; }
+  .access-section-heading .primary-button { width: 100%; }
+  .active-workspace-strip { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .workspace-invite-area .invite-form { grid-template-columns: 1fr; }
+  .workspace-invite-area .full-button { width: 100%; }
+  .account-heading { margin-top: 22px; }
+  .account-heading .subtle-count { align-self: flex-start; }
+  .account-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .account-entry-form .form-two { grid-template-columns: 1fr; }
+}
