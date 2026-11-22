@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getSupabase } from "@/lib/supabase";
 
@@ -115,6 +115,7 @@ export default function Home() {
   const [taskUpdateRefresh, setTaskUpdateRefresh] = useState(0);
   const [loadingTaskUpdates, setLoadingTaskUpdates] = useState(false);
   const [postingTaskUpdate, setPostingTaskUpdate] = useState(false);
+  const taskChatEndRef = useRef<HTMLDivElement | null>(null);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
@@ -149,7 +150,14 @@ export default function Home() {
   const weekEndKey = localDateKey(weekEnd);
   const overdueCount = tasks.filter((task) => task.due_date && task.due_date < todayKey && task.status !== "done" && task.status !== "cancelled").length;
   const todayTasks = tasks.filter((task) => task.due_date === todayKey && task.status !== "done" && task.status !== "cancelled");
-  const weekTasks = tasks.filter((task) => task.due_date && task.due_date >= todayKey && task.due_date <= weekEndKey && task.status !== "done" && task.status !== "cancelled");
+  const weekTasks = tasks
+    .filter((task) => task.due_date && task.due_date >= todayKey && task.due_date <= weekEndKey && task.status !== "done" && task.status !== "cancelled")
+    .sort((a, b) => {
+      const dateOrder = (a.due_date ?? "").localeCompare(b.due_date ?? "");
+      if (dateOrder) return dateOrder;
+      const weight: Record<Task["priority"], number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+      return weight[a.priority] - weight[b.priority];
+    });
   const avgProgress = tasks.length ? Math.round(tasks.reduce((sum, task) => sum + (task.progress ?? 0), 0) / tasks.length) : 0;
   const completion = tasks.length ? Math.round((completedCount / tasks.length) * 100) : 0;
   const calendarCells = useMemo(() => {
@@ -358,6 +366,10 @@ export default function Home() {
       void supabase.removeChannel(channel);
     };
   }, [supabase, activeUpdateTask?.id, taskUpdateRefresh, flash, user?.id, profileName]);
+
+  useEffect(() => {
+    taskChatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [taskUpdateRows, activeUpdateTask?.id]);
 
   const doAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -900,8 +912,18 @@ export default function Home() {
               </div>
             </div>
             <section className="panel-card dashboard-priorities">
-              <div className="section-head"><div><div className="eyebrow">PRIORITAS 7 HARI KE DEPAN</div><h3>Agenda dan deadline terdekat</h3></div><button className="text-button" onClick={() => setActiveView("calendar")}>Buka Kalender ↗</button></div>
-              {weekTasks.length ? <div className="upcoming-task-list">{weekTasks.slice(0, 6).map((task) => <div className="upcoming-task" key={task.id}><span className="upcoming-date">{dateLabel(task.due_date)}</span><b>{task.title}</b><span className={`pill ${priorityMeta[task.priority].tone}`}>{priorityMeta[task.priority].label}</span><span className={`pill ${statusMeta[task.status].tone}`}>{statusMeta[task.status].label}</span><button className="icon-button" onClick={() => openTaskEditor(task)}>✎</button></div>)}</div> : <EmptyInline title="Belum ada deadline minggu ini." detail="Tambahkan deadline agar agenda lebih mudah dipantau." action="＋ Input Task" onClick={() => openTaskEditor()} />}
+              <div className="section-head"><div><div className="eyebrow">PRIORITAS 7 HARI KE DEPAN</div><h3>Daftar tugas prioritas</h3><p>Urut berdasarkan deadline terdekat, lalu tingkat prioritas.</p></div><div className="priority-week-actions"><span className="subtle-count">{weekTasks.length} tugas aktif</span><button className="text-button" onClick={() => setActiveView("tasks")}>Buka daftar tugas ↗</button></div></div>
+              {weekTasks.length ? <div className="task-table-wrap priority-week-table-wrap"><table className="task-table priority-week-table"><thead><tr><th>Deadline</th><th>Rencana / Kegiatan</th><th>PIC</th><th>Priority</th><th>Status</th><th>Progress</th><th>Aksi</th></tr></thead><tbody>
+                {weekTasks.map((task) => <tr key={task.id}>
+                  <td className="date-cell priority-date-cell">{dateLabel(task.due_date)}</td>
+                  <td><div className="table-task-title"><b>{task.title}</b><span>{task.category || "Tanpa kategori"}{(task.division_ids ?? []).length ? ` · ${(task.division_ids ?? []).map((id) => divisions.find((division) => division.id === id)?.name).filter(Boolean).join(", ")}` : ""}</span></div></td>
+                  <td><span className="pic-name">{members.find((member) => member.user_id === task.assigned_to)?.display_name ?? (task.assigned_to === user?.id ? profileName : "Belum ditentukan")}</span></td>
+                  <td><span className={`priority-text ${task.priority}`}>{priorityMeta[task.priority].label}</span></td>
+                  <td><span className={`pill ${statusMeta[task.status].tone}`}>{statusMeta[task.status].label}</span></td>
+                  <td><div className="table-progress"><span>{task.progress}%</span><i><b style={{ width: `${task.progress}%` }} /></i></div></td>
+                  <td><div className="task-action-stack"><button className="edit-task-button update-task-button" onClick={() => openTaskUpdates(task)}>💬 Update</button><button className="icon-button" title="Edit tugas" onClick={() => openTaskEditor(task)}>✎</button></div></td>
+                </tr>)}
+              </tbody></table></div> : <EmptyInline title="Belum ada deadline dalam 7 hari ke depan." detail="Tambahkan deadline agar daftar prioritas tim terisi." action="＋ Input Task" onClick={() => openTaskEditor()} />}
             </section>
           </>}
  
@@ -1063,49 +1085,59 @@ export default function Home() {
         </form>
       </Modal>}
 
-      {activeUpdateTask && <Modal className="task-updates-modal" title="Update Tugas" subtitle={activeUpdateTask.title} onClose={() => setActiveUpdateTask(null)}>
-        <div className="task-update-summary">
-          <span className={`pill ${statusMeta[activeUpdateTask.status].tone}`}>{statusMeta[activeUpdateTask.status].label}</span>
-          <span className={`pill ${priorityMeta[activeUpdateTask.priority].tone}`}>{priorityMeta[activeUpdateTask.priority].label}</span>
-          <span className="task-update-summary-progress">Progress <b>{activeUpdateTask.progress}%</b></span>
-          <span className="task-update-summary-pic">PIC: {members.find((member) => member.user_id === activeUpdateTask.assigned_to)?.display_name ?? "Belum ditentukan"}</span>
-        </div>
-        <div className="task-chat-thread">
-          {loadingTaskUpdates && <div className="task-chat-empty">Memuat percakapan…</div>}
-          {!loadingTaskUpdates && taskUpdateRows.length === 0 && <div className="task-chat-empty"><span>💬</span><b>Belum ada update.</b><small>Tulis perkembangan pertama untuk memulai percakapan tugas ini.</small></div>}
-          {taskUpdateRows.map((item) => {
-            const mine = item.created_by === user?.id;
-            const changedStatus = item.status_from !== item.status_to;
-            const changedProgress = item.progress_from !== item.progress_to;
-            return <article className={mine ? "task-chat-message mine" : "task-chat-message"} key={item.id}>
-              {!mine && <div className="task-chat-avatar">{initials(item.author_name)}</div>}
-              <div className="task-chat-message-content">
-                <div className="task-chat-meta"><b>{mine ? "Kamu" : item.author_name}</b><time>{timeLabel(item.created_at)}</time></div>
-                <div className="task-chat-bubble">
-                  <p>{item.message}</p>
-                  {(changedStatus || changedProgress || item.status_from === item.status_to) && <div className="task-chat-change">
-                    {changedStatus ? <span>Status: <b>{statusMeta[item.status_from].label}</b> → <b>{statusMeta[item.status_to].label}</b></span> : <span>Status: <b>{statusMeta[item.status_to].label}</b></span>}
-                    {changedProgress && <span>Progress: <b>{item.progress_from}%</b> → <b>{item.progress_to}%</b></span>}
-                  </div>}
-                </div>
-              </div>
-              {mine && <div className="task-chat-avatar mine-avatar">{initials(profileName)}</div>}
-            </article>;
-          })}
-        </div>
-        {workspaceRole === "viewer" ? <div className="task-chat-readonly">Akun kamu memiliki akses baca saja. Kamu tetap bisa melihat seluruh riwayat update.</div> :
-          <form className="task-chat-compose" onSubmit={postTaskUpdate}>
-            <label className="task-chat-message-label">Informasi terbaru<textarea value={taskUpdateDraft} onChange={(e) => setTaskUpdateDraft(e.target.value)} placeholder="Tulis perkembangan terbaru, kendala, hasil pekerjaan, atau tindak lanjut berikutnya…" rows={3} maxLength={5000} required /></label>
-            <div className="task-chat-compose-controls">
-              <label>Status<select value={taskUpdateStatus} onChange={(e) => { const status = e.target.value as Task["status"]; setTaskUpdateStatus(status); if (status === "done") setTaskUpdateProgress(100); }}><option value="todo">Belum Mulai</option><option value="in_progress">Sedang Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
-              <label>Progress (%)<input type="number" min="0" max="100" step="5" value={taskUpdateStatus === "done" ? 100 : taskUpdateProgress} onChange={(e) => setTaskUpdateProgress(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} /></label>
-              <small>{taskUpdateDraft.length}/5000</small>
-              <button className="primary-button" disabled={postingTaskUpdate || !taskUpdateDraft.trim()}>{postingTaskUpdate ? "Mengirim…" : "Kirim Update ↗"}</button>
+      {activeUpdateTask && <div className="task-update-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setActiveUpdateTask(null); }}>
+        <aside className="task-updates-drawer" role="dialog" aria-modal="true" aria-label={`Update tugas ${activeUpdateTask.title}`}>
+          <header className="task-drawer-header">
+            <div className="task-drawer-title-wrap">
+              <div className="task-drawer-avatar">HW</div>
+              <div><span className="eyebrow">RUANG DISKUSI TUGAS</span><h2>{activeUpdateTask.title}</h2><p>{members.find((member) => member.user_id === activeUpdateTask.assigned_to)?.display_name ?? "Belum ada PIC"} · {activeUpdateTask.priority === "urgent" ? "Urgent" : priorityMeta[activeUpdateTask.priority].label}</p></div>
             </div>
-          </form>}
-      </Modal>}
+            <button className="task-drawer-close" onClick={() => setActiveUpdateTask(null)} aria-label="Tutup panel">×</button>
+          </header>
+          <div className="task-update-summary">
+            <span className={`pill ${statusMeta[activeUpdateTask.status].tone}`}>{statusMeta[activeUpdateTask.status].label}</span>
+            <span className="task-update-summary-progress">Progress <b>{activeUpdateTask.progress}%</b></span>
+            <span className="task-update-summary-pic">Deadline: {dateLabel(activeUpdateTask.due_date)}</span>
+          </div>
+          <div className="task-chat-thread">
+            <div className="task-chat-day-separator"><span>RIWAYAT UPDATE</span></div>
+            {loadingTaskUpdates && <div className="task-chat-empty">Memuat percakapan…</div>}
+            {!loadingTaskUpdates && taskUpdateRows.length === 0 && <div className="task-chat-empty"><span>💬</span><b>Belum ada update.</b><small>Tulis perkembangan pertama untuk memulai percakapan tugas ini.</small></div>}
+            {taskUpdateRows.map((item) => {
+              const mine = item.created_by === user?.id;
+              const changedStatus = item.status_from !== item.status_to;
+              const changedProgress = item.progress_from !== item.progress_to;
+              return <article className={mine ? "task-chat-message mine" : "task-chat-message"} key={item.id}>
+                {!mine && <div className="task-chat-avatar">{initials(item.author_name)}</div>}
+                <div className="task-chat-message-content">
+                  <div className="task-chat-meta"><b>{mine ? "Kamu" : item.author_name}</b><time>{timeLabel(item.created_at)}</time></div>
+                  <div className="task-chat-bubble">
+                    <p>{item.message}</p>
+                    {(changedStatus || changedProgress || item.status_from === item.status_to) && <div className="task-chat-change">
+                      {changedStatus ? <span>Status: <b>{statusMeta[item.status_from].label}</b> → <b>{statusMeta[item.status_to].label}</b></span> : <span>Status: <b>{statusMeta[item.status_to].label}</b></span>}
+                      {changedProgress && <span>Progress: <b>{item.progress_from}%</b> → <b>{item.progress_to}%</b></span>}
+                    </div>}
+                  </div>
+                </div>
+                {mine && <div className="task-chat-avatar mine-avatar">{initials(profileName)}</div>}
+              </article>;
+            })}
+            <div ref={taskChatEndRef} />
+          </div>
+          {workspaceRole === "viewer" ? <div className="task-chat-readonly">Akun kamu memiliki akses baca saja. Kamu tetap bisa melihat seluruh riwayat update.</div> :
+            <form className="task-chat-compose" onSubmit={postTaskUpdate}>
+              <label className="task-chat-message-label"><textarea value={taskUpdateDraft} onChange={(e) => setTaskUpdateDraft(e.target.value)} placeholder="Tulis pesan atau perkembangan terbaru…" rows={2} maxLength={5000} required aria-label="Pesan update terbaru" /></label>
+              <div className="task-chat-compose-controls">
+                <label>Status<select value={taskUpdateStatus} onChange={(e) => { const status = e.target.value as Task["status"]; setTaskUpdateStatus(status); if (status === "done") setTaskUpdateProgress(100); }}><option value="todo">Belum Mulai</option><option value="in_progress">Sedang Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
+                <label>Progress (%)<input type="number" min="0" max="100" step="5" value={taskUpdateStatus === "done" ? 100 : taskUpdateProgress} onChange={(e) => setTaskUpdateProgress(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} /></label>
+                <small>{taskUpdateDraft.length}/5000</small>
+                <button className="task-chat-send" disabled={postingTaskUpdate || !taskUpdateDraft.trim()} aria-label="Kirim update">{postingTaskUpdate ? "…" : "➤"}</button>
+              </div>
+            </form>}
+        </aside>
+      </div>}
 
-      {showNoteModal &&<Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
+            {showNoteModal &&<Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
 
       {showEventModal && <Modal title="Add an event" subtitle="Put an important moment on the shared calendar." onClose={() => setShowEventModal(false)}><form className="modal-form" onSubmit={createEvent}><label>Event title<input autoFocus value={eventForm.title} onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Team sync, project deadline…" required /></label><label>Description<textarea rows={2} value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} placeholder="What should everyone know?" /></label><label>Location<input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} placeholder="Meeting room or online link" /></label><div className="form-two"><label>Starts at<input type="datetime-local" value={eventForm.starts_at} onChange={(e) => setEventForm({ ...eventForm, starts_at: e.target.value })} required /></label><label>Ends at<input type="datetime-local" value={eventForm.ends_at} onChange={(e) => setEventForm({ ...eventForm, ends_at: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowEventModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Add event ↗</button></div></form></Modal>}
 
