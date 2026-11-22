@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
     const callerId = authData.user.id;
     const [{ data: callerAccount }, { data: superAdminRow }] = await Promise.all([
       adminClient.from("hw_user_accounts")
-        .select("user_id,login_id,display_name,account_role,is_active")
+        .select("user_id,login_id,display_name,account_role,is_active,hub_code")
         .eq("user_id", callerId).maybeSingle(),
       adminClient.from("hw_platform_admins")
         .select("user_id").eq("user_id", callerId).maybeSingle(),
@@ -63,21 +63,24 @@ Deno.serve(async (req) => {
     if (!callerAccount || callerAccount.is_active !== true) {
       return json({ error: "Akun tidak aktif atau tidak terdaftar di HUB WORKSPACE." }, 403);
     }
-    const isSuperAdmin = Boolean(superAdminRow);
-    const isAdmin = isSuperAdmin || callerAccount.account_role === "admin";
-    if (!isAdmin) return json({ error: "Hanya Admin yang dapat mengelola akun." }, 403);
 
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "");
 
     if (action === "self-update-profile") {
       const fullName = String(body.fullName || "").trim();
+      const hubCode = String(body.hubCode || "").trim().toUpperCase();
       if (fullName.length < 2 || fullName.length > 100) {
         return json({ error: "Nama tampilan harus 2–100 karakter." }, 400);
       }
+      if (!hubCode) return json({ error: "Pilih HUB untuk akun ini." }, 400);
+      const { data: targetHub, error: hubError } = await adminClient.from("hw_hubs")
+        .select("hub_code").eq("hub_code", hubCode).maybeSingle();
+      if (hubError || !targetHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
+
       const now = new Date().toISOString();
       const { error: accountUpdateError } = await adminClient.from("hw_user_accounts")
-        .update({ display_name: fullName, updated_at: now })
+        .update({ display_name: fullName, hub_code: hubCode, updated_at: now })
         .eq("user_id", callerId);
       if (accountUpdateError) return json({ error: accountUpdateError.message }, 400);
 
@@ -90,14 +93,19 @@ Deno.serve(async (req) => {
       });
       if (authUpdateError) return json({ error: authUpdateError.message }, 400);
 
-      return json({ ok: true, displayName: fullName });
+      return json({ ok: true, displayName: fullName, hubCode });
     }
+
+    const isSuperAdmin = Boolean(superAdminRow);
+    const isAdmin = isSuperAdmin || callerAccount.account_role === "admin";
+    if (!isAdmin) return json({ error: "Hanya Admin yang dapat mengelola akun." }, 403);
 
     if (action === "create") {
       const loginId = String(body.loginId || "").trim().toLowerCase().replace(/\s+/g, "");
       const fullName = String(body.fullName || "").trim();
       const password = String(body.password || "");
       const role = String(body.role || "user");
+      const hubCode = String(body.hubCode || "").trim().toUpperCase();
 
       if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(loginId)) {
         return json({ error: "ID Login harus 3–32 karakter, huruf kecil, angka, titik, strip, atau underscore." }, 400);
@@ -105,6 +113,10 @@ Deno.serve(async (req) => {
       if (fullName.length < 2 || fullName.length > 100) {
         return json({ error: "Nama lengkap wajib diisi (2–100 karakter)." }, 400);
       }
+      if (!hubCode) return json({ error: "Pilih HUB untuk pengguna baru." }, 400);
+      const { data: selectedHub, error: selectedHubError } = await adminClient.from("hw_hubs")
+        .select("hub_code").eq("hub_code", hubCode).maybeSingle();
+      if (selectedHubError || !selectedHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
       if (password.length < 8 || password.length > 128) {
         return json({ error: "Password harus 8–128 karakter." }, 400);
       }
@@ -152,6 +164,7 @@ Deno.serve(async (req) => {
         login_id: loginId,
         display_name: fullName,
         account_role: role,
+        hub_code: hubCode,
         is_active: true,
         created_by: callerId,
       });
@@ -185,7 +198,7 @@ Deno.serve(async (req) => {
         return json({ error: membershipError.message }, 400);
       }
 
-      return json({ ok: true, userId, loginId: loginId.toUpperCase(), role, workspaceId, workspaceRole });
+      return json({ ok: true, userId, loginId: loginId.toUpperCase(), role, workspaceId, workspaceRole, hubCode });
     }
 
     const targetUserId = String(body.userId || "");
@@ -194,7 +207,7 @@ Deno.serve(async (req) => {
     }
 
     const { data: targetAccount, error: targetError } = await adminClient.from("hw_user_accounts")
-      .select("user_id,login_id,display_name,account_role,is_active")
+      .select("user_id,login_id,display_name,account_role,is_active,hub_code")
       .eq("user_id", targetUserId).maybeSingle();
     if (targetError || !targetAccount) return json({ error: "Akun tidak ditemukan." }, 404);
 
@@ -207,6 +220,7 @@ Deno.serve(async (req) => {
       const workspaceRole = String(body.workspaceRole || "");
       const requestedAppRole = body.accountRole === undefined ? targetAccount.account_role : String(body.accountRole);
       const password = String(body.password || "");
+      const hubCode = String(body.hubCode || "").trim().toUpperCase();
 
       if (fullName.length < 2 || fullName.length > 100) {
         return json({ error: "Nama pengguna harus 2–100 karakter." }, 400);
@@ -214,6 +228,10 @@ Deno.serve(async (req) => {
       if (!["admin", "member", "viewer"].includes(workspaceRole)) {
         return json({ error: "Role akses workspace tidak valid." }, 400);
       }
+      if (!hubCode) return json({ error: "Pilih HUB untuk akun ini." }, 400);
+      const { data: selectedHub, error: selectedHubError } = await adminClient.from("hw_hubs")
+        .select("hub_code").eq("hub_code", hubCode).maybeSingle();
+      if (selectedHubError || !selectedHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
       if (!["admin", "user"].includes(requestedAppRole)) {
         return json({ error: "Role aplikasi tidak valid." }, 400);
       }
@@ -239,7 +257,7 @@ Deno.serve(async (req) => {
 
       const now = new Date().toISOString();
       const { error: accountUpdateError } = await adminClient.from("hw_user_accounts")
-        .update({ display_name: fullName, account_role: requestedAppRole, updated_at: now })
+        .update({ display_name: fullName, account_role: requestedAppRole, hub_code: hubCode, updated_at: now })
         .eq("user_id", targetUserId);
       if (accountUpdateError) return json({ error: accountUpdateError.message }, 400);
 
@@ -272,7 +290,7 @@ Deno.serve(async (req) => {
       const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(targetUserId, authChanges);
       if (authUpdateError) return json({ error: authUpdateError.message }, 400);
 
-      return json({ ok: true, displayName: fullName, workspaceRole, accountRole: requestedAppRole, passwordChanged: Boolean(password) });
+      return json({ ok: true, displayName: fullName, workspaceRole, accountRole: requestedAppRole, hubCode, passwordChanged: Boolean(password) });
     }
 
     if (action === "delete-account") {
