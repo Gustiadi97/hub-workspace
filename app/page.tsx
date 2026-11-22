@@ -233,7 +233,10 @@ export default function Home() {
         const { data, error } = await supabase.auth.signUp({
           email: authEmail.trim(),
           password: authPassword,
-          options: { data: { full_name: authName.trim() } },
+          options: {
+            data: { full_name: authName.trim() },
+            emailRedirectTo: window.location.origin,
+          },
         });
         if (error) throw error;
         if (!data.session) setAuthMessage("Account created. Please check your email to confirm your address, then sign in.");
