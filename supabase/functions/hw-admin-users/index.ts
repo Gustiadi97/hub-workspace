@@ -69,14 +69,19 @@ Deno.serve(async (req) => {
 
     if (action === "self-update-profile") {
       const fullName = String(body.fullName || "").trim();
-      const hubCode = String(body.hubCode || "").trim().toUpperCase();
+      const requestedHubCode = String(body.hubCode || "").trim().toUpperCase();
+      const callerHasAllHubAccess = callerAccount.account_role === "admin" || Boolean(superAdminRow);
       if (fullName.length < 2 || fullName.length > 100) {
         return json({ error: "Nama tampilan harus 2–100 karakter." }, 400);
       }
-      if (!hubCode) return json({ error: "Pilih HUB untuk akun ini." }, 400);
-      const { data: targetHub, error: hubError } = await adminClient.from("hw_hubs")
-        .select("hub_code").eq("hub_code", hubCode).maybeSingle();
-      if (hubError || !targetHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
+      let hubCode: string | null = null;
+      if (!callerHasAllHubAccess) {
+        if (!requestedHubCode) return json({ error: "Pilih HUB untuk akun ini." }, 400);
+        const { data: targetHub, error: hubError } = await adminClient.from("hw_hubs")
+          .select("hub_code").eq("hub_code", requestedHubCode).maybeSingle();
+        if (hubError || !targetHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
+        hubCode = requestedHubCode;
+      }
 
       const now = new Date().toISOString();
       const { error: accountUpdateError } = await adminClient.from("hw_user_accounts")
@@ -104,8 +109,11 @@ Deno.serve(async (req) => {
       const loginId = String(body.loginId || "").trim().toLowerCase().replace(/\s+/g, "");
       const fullName = String(body.fullName || "").trim();
       const password = String(body.password || "");
-      const role = String(body.role || "user");
-      const hubCode = String(body.hubCode || "").trim().toUpperCase();
+      const accessRole = String(body.accessRole || (body.role === "admin" ? "admin" : body.workspaceRole || "member"));
+      const role = accessRole === "admin" ? "admin" : "user";
+      const workspaceRole = accessRole;
+      const requestedHubCode = String(body.hubCode || "").trim().toUpperCase();
+      const hubCode = accessRole === "admin" ? null : requestedHubCode;
 
       if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(loginId)) {
         return json({ error: "ID Login harus 3–32 karakter, huruf kecil, angka, titik, strip, atau underscore." }, 400);
@@ -113,21 +121,18 @@ Deno.serve(async (req) => {
       if (fullName.length < 2 || fullName.length > 100) {
         return json({ error: "Nama lengkap wajib diisi (2–100 karakter)." }, 400);
       }
-      if (!hubCode) return json({ error: "Pilih HUB untuk pengguna baru." }, 400);
-      const { data: selectedHub, error: selectedHubError } = await adminClient.from("hw_hubs")
-        .select("hub_code").eq("hub_code", hubCode).maybeSingle();
-      if (selectedHubError || !selectedHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
+      if (!["admin", "member", "viewer"].includes(accessRole)) return json({ error: "Akses pengguna tidak valid." }, 400);
+      if (accessRole !== "admin") {
+        if (!hubCode) return json({ error: "Pilih HUB untuk pengguna baru." }, 400);
+        const { data: selectedHub, error: selectedHubError } = await adminClient.from("hw_hubs")
+          .select("hub_code").eq("hub_code", hubCode).maybeSingle();
+        if (selectedHubError || !selectedHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
+      }
       if (password.length < 8 || password.length > 128) {
         return json({ error: "Password harus 8–128 karakter." }, 400);
       }
-      if (!["admin", "user"].includes(role)) return json({ error: "Role tidak valid." }, 400);
-      if (role === "admin" && !isSuperAdmin) {
+      if (accessRole === "admin" && !isSuperAdmin) {
         return json({ error: "Hanya Super Admin yang dapat membuat akun Admin." }, 403);
-      }
-
-      const workspaceRole = String(body.workspaceRole || "member");
-      if (!["admin", "member", "viewer"].includes(workspaceRole)) {
-        return json({ error: "Role akses workspace tidak valid." }, 400);
       }
 
       // HUB WORKSPACE uses one shared workspace for all application accounts.
@@ -217,26 +222,27 @@ Deno.serve(async (req) => {
 
     if (action === "update-account") {
       const fullName = String(body.fullName || "").trim();
-      const workspaceRole = String(body.workspaceRole || "");
-      const requestedAppRole = body.accountRole === undefined ? targetAccount.account_role : String(body.accountRole);
+      const accessRole = String(body.accessRole || (body.accountRole === "admin" ? "admin" : body.workspaceRole || "member"));
+      const workspaceRole = accessRole;
+      const requestedAppRole = accessRole === "admin" ? "admin" : "user";
       const password = String(body.password || "");
-      const hubCode = String(body.hubCode || "").trim().toUpperCase();
+      const requestedHubCode = String(body.hubCode || "").trim().toUpperCase();
+      const hubCode = accessRole === "admin" ? null : requestedHubCode;
 
       if (fullName.length < 2 || fullName.length > 100) {
         return json({ error: "Nama pengguna harus 2–100 karakter." }, 400);
       }
-      if (!["admin", "member", "viewer"].includes(workspaceRole)) {
-        return json({ error: "Role akses workspace tidak valid." }, 400);
+      if (!["admin", "member", "viewer"].includes(accessRole)) {
+        return json({ error: "Akses pengguna tidak valid." }, 400);
       }
-      if (!hubCode) return json({ error: "Pilih HUB untuk akun ini." }, 400);
-      const { data: selectedHub, error: selectedHubError } = await adminClient.from("hw_hubs")
-        .select("hub_code").eq("hub_code", hubCode).maybeSingle();
-      if (selectedHubError || !selectedHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
-      if (!["admin", "user"].includes(requestedAppRole)) {
-        return json({ error: "Role aplikasi tidak valid." }, 400);
+      if (accessRole === "admin" && !isSuperAdmin && targetAccount.account_role !== "admin") {
+        return json({ error: "Hanya Super Admin yang dapat memberikan akses Admin." }, 403);
       }
-      if (!isSuperAdmin && requestedAppRole !== targetAccount.account_role) {
-        return json({ error: "Hanya Super Admin yang dapat mengubah role aplikasi." }, 403);
+      if (accessRole !== "admin") {
+        if (!hubCode) return json({ error: "Pilih HUB untuk akun ini." }, 400);
+        const { data: selectedHub, error: selectedHubError } = await adminClient.from("hw_hubs")
+          .select("hub_code").eq("hub_code", hubCode).maybeSingle();
+        if (selectedHubError || !selectedHub) return json({ error: "HUB yang dipilih tidak ditemukan." }, 400);
       }
       if (password && (password.length < 8 || password.length > 128)) {
         return json({ error: "Password baru harus 8–128 karakter." }, 400);
@@ -290,7 +296,7 @@ Deno.serve(async (req) => {
       const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(targetUserId, authChanges);
       if (authUpdateError) return json({ error: authUpdateError.message }, 400);
 
-      return json({ ok: true, displayName: fullName, workspaceRole, accountRole: requestedAppRole, hubCode, passwordChanged: Boolean(password) });
+      return json({ ok: true, displayName: fullName, accessRole, hubCode, passwordChanged: Boolean(password) });
     }
 
     if (action === "delete-account") {
