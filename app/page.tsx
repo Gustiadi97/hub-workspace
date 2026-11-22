@@ -300,7 +300,7 @@ export default function Home() {
     setBusy(true);
     setAuthMessage("");
     try {
-      const normalizedId = loginInput.trim().toLowerCase().replace(/\\s+/g, "");
+      const normalizedId = loginInput.trim().toLowerCase().replace(/\s+/g, "");
       if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(normalizedId)) throw new Error("Format ID Login tidak valid.");
       const internalEmail = `${normalizedId}@accounts.hub-workspace.invalid`;
       const { error } = await supabase.auth.signInWithPassword({ email: internalEmail, password: authPassword });
@@ -449,7 +449,7 @@ export default function Home() {
     if (!supabase || !user || !activeWorkspace) return;
     setBusy(true);
     try {
-      const targetId = inviteLoginId.trim().toLowerCase().replace(/\\s+/g, "");
+      const targetId = inviteLoginId.trim().toLowerCase().replace(/\s+/g, "");
       if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(targetId)) throw new Error("Format ID pengguna tidak valid.");
       const { error } = await supabase.from("hw_workspace_invites").insert({
         workspace_id: activeWorkspace.id, email: null, login_id: targetId, role: inviteRole, invited_by: user.id,
@@ -489,7 +489,7 @@ export default function Home() {
     try {
       const payload = {
         action: "create",
-        loginId: accountForm.loginId.trim().toLowerCase().replace(/\\s+/g, ""),
+        loginId: accountForm.loginId.trim().toLowerCase().replace(/\s+/g, ""),
         fullName: accountForm.fullName.trim(),
         password: accountForm.password,
         role: isPlatformAdmin ? accountForm.role : "user",
@@ -944,7 +944,7 @@ export default function Home() {
       {showAccountModal && <Modal title="Buat Akun & Atur Akses" subtitle="Akun langsung ditambahkan ke workspace yang dipilih setelah disimpan." onClose={() => setShowAccountModal(false)}>
         <form className="modal-form account-entry-form" onSubmit={createAccount}>
           <div className="form-two">
-            <label>ID Pengguna<input autoFocus value={accountForm.loginId} onChange={(e) => setAccountForm({ ...accountForm, loginId: e.target.value.toLowerCase().replace(/\\s+/g, "") })} placeholder="Contoh: 10001597" autoCapitalize="none" required /></label>
+            <label>ID Pengguna<input autoFocus value={accountForm.loginId} onChange={(e) => setAccountForm({ ...accountForm, loginId: e.target.value.toLowerCase().replace(/\s+/g, "") })} placeholder="Contoh: 10001597" autoCapitalize="none" required /></label>
             <label>Nama lengkap<input value={accountForm.fullName} onChange={(e) => setAccountForm({ ...accountForm, fullName: e.target.value })} placeholder="Nama pengguna" required /></label>
           </div>
           <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
