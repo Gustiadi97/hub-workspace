@@ -26,6 +26,7 @@ type Task = {
   assigned_to: string | null;
   created_at: string;
   created_by: string;
+  hub_codes: string[];
 };
 type TaskUpdate = {
   id: string;
@@ -42,11 +43,14 @@ type TaskUpdate = {
 };
 type Note = { id: string; title: string; content: string; is_pinned: boolean; updated_at: string };
 type EventItem = { id: string; title: string; description: string; location: string; starts_at: string; ends_at: string | null; all_day: boolean };
-type Member = { id: string; user_id: string; role: string; display_name: string };
+type Member = { id: string; user_id: string; role: string; display_name: string; hub_code: string | null }; 
+type Hub = { hub_code: string; hub_name: string; color: string };
+type AppNotification = { id: string; user_id: string; workspace_id: string; task_id: string; kind: "task_assigned" | "task_routed" | "task_update"; title: string; body: string; created_at: string; read_at: string | null };
+type SystemDialogConfig = { title: string; message: string; confirmLabel?: string; danger?: boolean; inputLabel?: string; inputPlaceholder?: string };
 type Invite = { id: string; workspace_id: string; email: string | null; login_id: string | null; role: string; accepted_at: string | null; created_at: string; invited_by: string };
 type Category = { id: string; name: string; color: string };
 type Division = { id: string; name: string; color: string };
-type UserAccount = { user_id: string; login_id: string; display_name: string; account_role: "admin" | "user"; is_active: boolean; created_at: string; is_super_admin?: boolean; workspace_role?: string };
+type UserAccount = { user_id: string; login_id: string; display_name: string; account_role: "admin" | "user"; is_active: boolean; created_at: string; is_super_admin?: boolean; workspace_role?: string; hub_code: string | null };
 
 const statusMeta = {
   todo: { label: "Belum Mulai", tone: "slate" },
@@ -92,6 +96,8 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [profileName, setProfileName] = useState("");
   const [profileNameDraft, setProfileNameDraft] = useState("");
+  const [myHubCode, setMyHubCode] = useState("");
+  const [myHubCodeDraft, setMyHubCodeDraft] = useState("");
   const [savingProfileName, setSavingProfileName] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
@@ -103,6 +109,9 @@ export default function Home() {
   const [members, setMembers] = useState<Member[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
+  const [hubs, setHubs] = useState<Hub[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [activeView, setActiveView] = useState<ViewId>("overview");
   const [taskQuery, setTaskQuery] = useState("");
   const [taskFilter, setTaskFilter] = useState("all");
@@ -124,6 +133,11 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [toast, setToast] = useState("");
+  const [toastType, setToastType] = useState<"success" | "error" | "notification" | "info">("success");
+  const toastTimerRef = useRef<number | null>(null);
+  const [systemDialog, setSystemDialog] = useState<SystemDialogConfig | null>(null);
+  const [systemDialogValue, setSystemDialogValue] = useState("");
+  const systemDialogResolver = useRef<((value: string | null) => void) | null>(null);
   const [draggedTask, setDraggedTask] = useState<string | null>(null);
   const [loginInput, setLoginInput] = useState("");
   const [loginId, setLoginId] = useState("");
@@ -131,12 +145,12 @@ export default function Home() {
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<UserAccount | null>(null);
-  const [accountManageForm, setAccountManageForm] = useState({ fullName: "", workspaceRole: "member", accountRole: "user", password: "" });
+  const [accountManageForm, setAccountManageForm] = useState({ fullName: "", workspaceRole: "member", accountRole: "user", hubCode: "", password: "" });
   const [savingManagedAccount, setSavingManagedAccount] = useState(false);
-  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" });
+  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member", hubCode: "" });
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
-  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", start_date: localDateKey(new Date()), due_date: "", category: "Operasional", division_ids: [] as string[], assigned_to: "", status: "todo", progress: 0 });
+  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", start_date: localDateKey(new Date()), due_date: "", category: "Operasional", division_ids: [] as string[], hub_codes: [] as string[], assigned_to: "", status: "todo", progress: 0 });
   const [noteForm, setNoteForm] = useState({ title: "", content: "" });
   const [eventForm, setEventForm] = useState({ title: "", description: "", location: "", starts_at: "", ends_at: "" });
   const [categoryForm, setCategoryForm] = useState({ name: "", color: "#16836A" });
@@ -170,13 +184,36 @@ export default function Home() {
     label: priorityMeta[priority].label, count: tasks.filter((task) => task.priority === priority).length, tone: priority,
   })), [tasks]);
 
-  const flash = useCallback((text: string) => {
+  const flash = useCallback((text: string, type?: "success" | "error" | "notification" | "info") => {
+    const inferred = type ?? (/gagal|error|tidak cocok|tidak ditemukan|tidak aktif|wajib|harus|belum/i.test(text) ? "error" : /notifikasi|tugas baru|update tugas terbaru/i.test(text) ? "notification" : "success");
     setToast(text);
-    window.setTimeout(() => setToast(""), 3200);
+    setToastType(inferred);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), inferred === "notification" ? 5200 : 3800);
   }, []);
 
+  const requestSystemDialog = useCallback((config: SystemDialogConfig) => new Promise<string | null>((resolve) => {
+    if (systemDialogResolver.current) systemDialogResolver.current(null);
+    systemDialogResolver.current = resolve;
+    setSystemDialog(config);
+    setSystemDialogValue("");
+  }), []);
+
+  const finishSystemDialog = (value: string | null) => {
+    const resolve = systemDialogResolver.current;
+    systemDialogResolver.current = null;
+    setSystemDialog(null);
+    setSystemDialogValue("");
+    resolve?.(value);
+  };
+
+  const confirmSystem = async (title: string, message: string, confirmLabel = "Lanjutkan", danger = false) => {
+    const value = await requestSystemDialog({ title, message, confirmLabel, danger });
+    return value === "confirmed";
+  };
+
   const loadBase = useCallback(async (client: SupabaseClient, account: User) => {
-    const { data: accountInfo, error: accountError } = await client.from("hw_user_accounts").select("login_id,display_name,account_role,is_active").eq("user_id", account.id).maybeSingle();
+    const { data: accountInfo, error: accountError } = await client.from("hw_user_accounts").select("login_id,display_name,account_role,is_active,hub_code").eq("user_id", account.id).maybeSingle();
     if (accountError || !accountInfo || accountInfo.is_active !== true) {
       await client.auth.signOut();
       throw new Error("Akun tidak aktif atau belum didaftarkan oleh Admin HUB WORKSPACE.");
@@ -185,6 +222,8 @@ export default function Home() {
     const resolvedDisplayName = accountInfo.display_name || account.user_metadata?.full_name || accountInfo.login_id;
     setProfileName(resolvedDisplayName);
     setProfileNameDraft(resolvedDisplayName);
+    setMyHubCode(accountInfo.hub_code || "");
+    setMyHubCodeDraft(accountInfo.hub_code || "");
     setIsAppAdmin(accountInfo.account_role === "admin");
     const { data: spaceData, error: spaceError } = await client.from("hw_workspaces").select("id,name,workspace_type,owner_id,description").order("created_at", { ascending: true });
     if (spaceError) throw spaceError;
@@ -230,6 +269,11 @@ export default function Home() {
         setUser(null);
         setProfileName("");
         setProfileNameDraft("");
+        setMyHubCode("");
+        setMyHubCodeDraft("");
+        setHubs([]);
+        setNotifications([]);
+        setNotificationsOpen(false);
         setWorkspaces([]);
         setWorkspaceId("");
         setTasks([]);
@@ -258,31 +302,38 @@ export default function Home() {
     let mounted = true;
     const load = async () => {
       setBusy(true);
-      const [taskRes, noteRes, eventRes, memberRes, categoryRes, divisionRes] = await Promise.all([
+      const [taskRes, noteRes, eventRes, memberRes, categoryRes, divisionRes, hubRes] = await Promise.all([
         supabase.from("hw_tasks").select("*").eq("workspace_id", workspaceId).order("created_at", { ascending: false }),
         supabase.from("hw_notes").select("*").eq("workspace_id", workspaceId).order("updated_at", { ascending: false }),
         supabase.from("hw_calendar_events").select("*").eq("workspace_id", workspaceId).order("starts_at", { ascending: true }),
         supabase.from("hw_workspace_members").select("id,user_id,role").eq("workspace_id", workspaceId).order("joined_at", { ascending: true }),
         supabase.from("hw_categories").select("id,name,color").eq("workspace_id", workspaceId).order("name"),
         supabase.from("hw_divisions").select("id,name,color").eq("workspace_id", workspaceId).order("name"),
+        supabase.from("hw_hubs").select("hub_code,hub_name,color").order("hub_code"),
       ]);
       if (!mounted) return;
-      if (taskRes.error || noteRes.error || eventRes.error || memberRes.error || categoryRes.error || divisionRes.error) {
-        flash(messageFrom(taskRes.error || noteRes.error || eventRes.error || memberRes.error || categoryRes.error || divisionRes.error));
+      if (taskRes.error || noteRes.error || eventRes.error || memberRes.error || categoryRes.error || divisionRes.error || hubRes.error) {
+        flash(messageFrom(taskRes.error || noteRes.error || eventRes.error || memberRes.error || categoryRes.error || divisionRes.error || hubRes.error));
       }
       setTasks((taskRes.data ?? []) as Task[]);
       setNotes((noteRes.data ?? []) as Note[]);
       setEvents((eventRes.data ?? []) as EventItem[]);
       setCategories((categoryRes.data ?? []) as Category[]);
       setDivisions((divisionRes.data ?? []) as Division[]);
+      setHubs((hubRes.data ?? []) as Hub[]);
       const memberRows = (memberRes.data ?? []) as { id: string; user_id: string; role: string }[];
       setWorkspaceRole(memberRows.find((member) => member.user_id === user.id)?.role ?? (activeWorkspace?.owner_id === user.id ? "owner" : "viewer"));
       if (memberRows.length) {
-        const { data: profileRows } = await supabase.from("hw_user_profiles").select("user_id,display_name").in("user_id", memberRows.map((member) => member.user_id));
+        const [{ data: profileRows }, { data: accountRows }] = await Promise.all([
+          supabase.from("hw_user_profiles").select("user_id,display_name").in("user_id", memberRows.map((member) => member.user_id)),
+          supabase.from("hw_user_accounts").select("user_id,display_name,hub_code").in("user_id", memberRows.map((member) => member.user_id)),
+        ]);
         const profiles = new Map((profileRows ?? []).map((profile: { user_id: string; display_name: string }) => [profile.user_id, profile.display_name]));
+        const accountMap = new Map((accountRows ?? []).map((account: { user_id: string; display_name: string; hub_code: string | null }) => [account.user_id, account]));
         setMembers(memberRows.map((member) => ({
           ...member,
-          display_name: profiles.get(member.user_id) || "Workspace member",
+          display_name: accountMap.get(member.user_id)?.display_name || profiles.get(member.user_id) || "Workspace member",
+          hub_code: accountMap.get(member.user_id)?.hub_code || null,
         })));
       } else {
         setMembers([]);
@@ -301,7 +352,7 @@ export default function Home() {
     let mounted = true;
     const loadAccounts = async () => {
       const [{ data: accountRows, error }, { data: superRows }, { data: memberRows }] = await Promise.all([
-        supabase.from("hw_user_accounts").select("user_id,login_id,display_name,account_role,is_active,created_at").order("created_at", { ascending: false }),
+        supabase.from("hw_user_accounts").select("user_id,login_id,display_name,account_role,is_active,created_at,hub_code").order("created_at", { ascending: false }),
         supabase.from("hw_platform_admins").select("user_id"),
         supabase.from("hw_workspace_members").select("user_id,role").eq("workspace_id", workspaceId),
       ]);
@@ -392,7 +443,7 @@ export default function Home() {
 
   const defaultTaskForm = (dueDate = "") => ({
     title: "", description: "", priority: "medium", start_date: localDateKey(new Date()),
-    due_date: dueDate, category: categories[0]?.name ?? "Operasional", division_ids: [] as string[],
+    due_date: dueDate, category: categories[0]?.name ?? "Operasional", division_ids: [] as string[], hub_codes: [] as string[],
     assigned_to: user?.id ?? "", status: "todo", progress: 0,
   });
   const openTaskEditor = (task?: Task, dueDate?: string) => {
@@ -402,6 +453,7 @@ export default function Home() {
       start_date: task.start_date ?? localDateKey(new Date()), due_date: task.due_date ?? "",
       category: task.category || categories[0]?.name || "Pekerjaan Umum",
       division_ids: Array.isArray(task.division_ids) ? task.division_ids : [],
+      hub_codes: Array.isArray(task.hub_codes) ? task.hub_codes : [],
       assigned_to: task.assigned_to ?? "",
       status: task.status, progress: task.progress ?? 0,
     } : defaultTaskForm(dueDate ?? ""));
@@ -425,6 +477,7 @@ export default function Home() {
         title: taskForm.title.trim(), description: taskForm.description.trim(), priority: taskForm.priority,
         start_date: taskForm.start_date || null, due_date: taskForm.due_date || null,
         category: taskForm.category, division_ids: taskForm.division_ids.filter((id: string) => divisions.some((division) => division.id === id)),
+        hub_codes: taskForm.hub_codes.filter((code: string) => hubs.some((hub) => hub.hub_code === code)),
         assigned_to: taskForm.assigned_to || null, status: taskForm.status,
         progress: taskForm.status === "done" ? 100 : Math.max(0, Math.min(100, Number(taskForm.progress) || 0)),
       };
@@ -585,9 +638,11 @@ export default function Home() {
     }
     setSavingProfileName(true);
     try {
-      await invokeAccountAdmin({ action: "self-update-profile", fullName });
+      if (!myHubCodeDraft) throw new Error("Pilih HUB untuk profil pengguna.");
+      await invokeAccountAdmin({ action: "self-update-profile", fullName, hubCode: myHubCodeDraft });
       setProfileName(fullName);
       setProfileNameDraft(fullName);
+      setMyHubCode(myHubCodeDraft);
       setRefreshKey((value) => value + 1);
       setTaskUpdateRefresh((value) => value + 1);
       flash("Nama tampilan berhasil diperbarui.");
@@ -609,10 +664,11 @@ export default function Home() {
         password: accountForm.password,
         role: isPlatformAdmin ? accountForm.role : "user",
         workspaceRole: accountForm.workspaceRole,
+        hubCode: accountForm.hubCode,
       };
       await invokeAccountAdmin(payload);
       setShowAccountModal(false);
-      setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member" });
+      setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceRole: "member", hubCode: "" });
       setRefreshKey((value) => value + 1);
       flash("Akun berhasil dibuat dan langsung diberi akses workspace.");
     } catch (error) { flash(messageFrom(error)); }
@@ -626,6 +682,7 @@ export default function Home() {
       fullName: account.display_name,
       workspaceRole: ["admin", "member", "viewer"].includes(account.workspace_role || "") ? account.workspace_role! : "member",
       accountRole: account.account_role,
+      hubCode: account.hub_code || "",
       password: "",
     });
   };
@@ -649,6 +706,7 @@ export default function Home() {
         userId: editingAccount.user_id,
         fullName,
         workspaceRole: accountManageForm.workspaceRole,
+        hubCode: accountManageForm.hubCode,
       };
       if (isPlatformAdmin) payload.accountRole = accountManageForm.accountRole;
       if (accountManageForm.password) payload.password = accountManageForm.password;
@@ -778,6 +836,7 @@ export default function Home() {
         due_date: item.due_date || null,
         category: typeof item.category === "string" && categories.some((category) => category.name === item.category) ? item.category : (categories[0]?.name ?? "Operasional"),
         division_ids: Array.isArray(item.division_ids) ? item.division_ids.filter((id: string) => divisions.some((division) => division.id === id)) : [],
+        hub_codes: Array.isArray(item.hub_codes) ? item.hub_codes.filter((code: string) => hubs.some((hub) => hub.hub_code === code)) : [],
         assigned_to: item.assigned_to && members.some((member) => member.user_id === item.assigned_to) ? item.assigned_to : null,
       }));
       const noteRows = backupNotes.filter((item) => item && typeof item.content === "string").map((item) => ({
