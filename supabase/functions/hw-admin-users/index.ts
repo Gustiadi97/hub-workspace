@@ -70,6 +70,29 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "");
 
+    if (action === "self-update-profile") {
+      const fullName = String(body.fullName || "").trim();
+      if (fullName.length < 2 || fullName.length > 100) {
+        return json({ error: "Nama tampilan harus 2–100 karakter." }, 400);
+      }
+      const now = new Date().toISOString();
+      const { error: accountUpdateError } = await adminClient.from("hw_user_accounts")
+        .update({ display_name: fullName, updated_at: now })
+        .eq("user_id", callerId);
+      if (accountUpdateError) return json({ error: accountUpdateError.message }, 400);
+
+      const { error: profileUpdateError } = await adminClient.from("hw_user_profiles")
+        .upsert({ user_id: callerId, display_name: fullName, updated_at: now }, { onConflict: "user_id" });
+      if (profileUpdateError) return json({ error: profileUpdateError.message }, 400);
+
+      const { error: authUpdateError } = await adminClient.auth.admin.updateUserById(callerId, {
+        user_metadata: { ...(authData.user.user_metadata || {}), full_name: fullName },
+      });
+      if (authUpdateError) return json({ error: authUpdateError.message }, 400);
+
+      return json({ ok: true, displayName: fullName });
+    }
+
     if (action === "create") {
       const loginId = String(body.loginId || "").trim().toLowerCase().replace(/\s+/g, "");
       const fullName = String(body.fullName || "").trim();
