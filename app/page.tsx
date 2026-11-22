@@ -19,7 +19,9 @@ type Task = {
   status: "todo" | "in_progress" | "waiting" | "done" | "cancelled";
   priority: "low" | "medium" | "high" | "urgent";
   progress: number;
+  start_date: string | null;
   due_date: string | null;
+  category: string;
   assigned_to: string | null;
   created_at: string;
   created_by: string;
@@ -49,7 +51,7 @@ const navItems = [
   { id: "tasks", label: "Daftar Tugas", icon: "☷" },
   { id: "board", label: "Kanban", icon: "▥" },
   { id: "notes", label: "Catatan Cepat", icon: "▤" },
-  { id: "settings", label: "Pengaturan & Backup", icon: "⚙" },
+  { id: "settings", label: "Pengaturan", icon: "⚙" },
 ] as const;
 type ViewId = "overview" | "calendar" | "tasks" | "board" | "notes" | "settings" | "team" | "users";
 
@@ -69,7 +71,9 @@ function messageFrom(error: unknown) {
 function localDateKey(date: Date) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 }
+const taskCategoryOptions = ["Operasional", "Administrasi", "Meeting / Rapat", "Monitoring", "Laporan", "Project / Program", "Follow Up", "Pekerjaan Umum", "Lainnya"] as const;
 function taskCategory(task: Task) {
+  if (task.category?.trim()) return task.category;
   const value = `${task.title} ${task.description ?? ""}`.toLowerCase();
   if (/meeting|rapat|briefing|review|koordinasi|sync/.test(value)) return "Meeting / Rapat";
   if (/laporan|report|analisis|audit|monitoring/.test(value)) return "Laporan";
@@ -112,10 +116,10 @@ export default function Home() {
   const [isAppAdmin, setIsAppAdmin] = useState(false);
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user" });
+  const [accountForm, setAccountForm] = useState({ loginId: "", fullName: "", password: "", role: "user", workspaceId: "", workspaceRole: "member" });
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
-  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", due_date: "", assigned_to: "", status: "todo", progress: 0 });
+  const [taskForm, setTaskForm] = useState({ title: "", description: "", priority: "medium", start_date: localDateKey(new Date()), due_date: "", category: "Operasional", assigned_to: "", status: "todo", progress: 0 });
   const [noteForm, setNoteForm] = useState({ title: "", content: "" });
   const [eventForm, setEventForm] = useState({ title: "", description: "", location: "", starts_at: "", ends_at: "" });
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", workspace_type: "team" as "personal" | "team" });
@@ -141,10 +145,9 @@ export default function Home() {
     const start = new Date(first); start.setDate(first.getDate() - offset);
     return Array.from({ length: 42 }, (_, index) => { const day = new Date(start); day.setDate(start.getDate() + index); return day; });
   }, [calendarMonth]);
-  const categoryRows = useMemo(() => {
-    const labels = ["Meeting / Rapat", "Dokumen & Arsip", "Laporan", "Follow Up", "Keuangan / Budget", "Pekerjaan Umum"];
-    return labels.map((label) => ({ label, count: tasks.filter((task) => taskCategory(task) === label).length }));
-  }, [tasks]);
+  const categoryRows = useMemo(() => taskCategoryOptions.map((label) => ({
+    label, count: tasks.filter((task) => taskCategory(task) === label).length,
+  })), [tasks]);
   const priorityRows = useMemo(() => (["urgent", "high", "medium", "low"] as const).map((priority) => ({
     label: priorityMeta[priority].label, count: tasks.filter((task) => task.priority === priority).length, tone: priority,
   })), [tasks]);
@@ -331,17 +334,18 @@ export default function Home() {
     } finally { setBusy(false); }
   };
 
+  const defaultTaskForm = (dueDate = "") => ({
+    title: "", description: "", priority: "medium", start_date: localDateKey(new Date()),
+    due_date: dueDate, category: "Operasional", assigned_to: user?.id ?? "", status: "todo", progress: 0,
+  });
   const openTaskEditor = (task?: Task, dueDate?: string) => {
     setEditingTaskId(task?.id ?? null);
     setTaskForm(task ? {
-      title: task.title,
-      description: task.description ?? "",
-      priority: task.priority,
-      due_date: task.due_date ?? "",
-      assigned_to: task.assigned_to ?? "",
-      status: task.status,
-      progress: task.progress ?? 0,
-    } : { title: "", description: "", priority: "medium", due_date: dueDate ?? "", assigned_to: user?.id ?? "", status: "todo", progress: 0 });
+      title: task.title, description: task.description ?? "", priority: task.priority,
+      start_date: task.start_date ?? localDateKey(new Date()), due_date: task.due_date ?? "",
+      category: task.category || "Pekerjaan Umum", assigned_to: task.assigned_to ?? "",
+      status: task.status, progress: task.progress ?? 0,
+    } : defaultTaskForm(dueDate ?? ""));
     setShowTaskModal(true);
   };
 
@@ -351,12 +355,9 @@ export default function Home() {
     setBusy(true);
     try {
       const payload = {
-        title: taskForm.title.trim(),
-        description: taskForm.description.trim(),
-        priority: taskForm.priority,
-        due_date: taskForm.due_date || null,
-        assigned_to: taskForm.assigned_to || null,
-        status: taskForm.status,
+        title: taskForm.title.trim(), description: taskForm.description.trim(), priority: taskForm.priority,
+        start_date: taskForm.start_date || null, due_date: taskForm.due_date || null,
+        category: taskForm.category, assigned_to: taskForm.assigned_to || null, status: taskForm.status,
         progress: taskForm.status === "done" ? 100 : Math.max(0, Math.min(100, Number(taskForm.progress) || 0)),
       };
       const { error } = editingTaskId
@@ -365,7 +366,7 @@ export default function Home() {
       if (error) throw error;
       setShowTaskModal(false);
       setEditingTaskId(null);
-      setTaskForm({ title: "", description: "", priority: "medium", due_date: "", assigned_to: user.id, status: "todo", progress: 0 });
+      setTaskForm(defaultTaskForm());
       setRefreshKey((value) => value + 1);
       flash(editingTaskId ? "Task updated." : "Task added.");
     } catch (error) { flash(messageFrom(error)); }
@@ -483,6 +484,7 @@ export default function Home() {
 
   const createAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!accountForm.workspaceId) { flash("Pilih workspace yang akan diberikan ke akun ini."); return; }
     setBusy(true);
     try {
       const payload = {
@@ -491,12 +493,14 @@ export default function Home() {
         fullName: accountForm.fullName.trim(),
         password: accountForm.password,
         role: isPlatformAdmin ? accountForm.role : "user",
+        workspaceId: accountForm.workspaceId,
+        workspaceRole: accountForm.workspaceRole,
       };
       await invokeAccountAdmin(payload);
       setShowAccountModal(false);
-      setAccountForm({ loginId: "", fullName: "", password: "", role: "user" });
+      setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceId, workspaceRole: "member" });
       setRefreshKey((value) => value + 1);
-      flash("Akun baru berhasil dibuat.");
+      flash("Akun berhasil dibuat dan langsung diberi akses workspace.");
     } catch (error) { flash(messageFrom(error)); }
     finally { setBusy(false); }
   };
@@ -722,7 +726,7 @@ export default function Home() {
             <button className="icon-button" onClick={signOut}>↗</button>
           </div>
 
-          {pendingInvites.length > 0 && <div className="invite-banner"><div><b>You have {pendingInvites.length} workspace invitation{pendingInvites.length > 1 ? "s" : ""}</b><span>Accept it in Team & access to join the workspace.</span></div><button onClick={() => setActiveView("team")}>Review invitations ↗</button></div>}
+          {pendingInvites.length > 0 && <div className="invite-banner"><div><b>Kamu memiliki {pendingInvites.length} undangan workspace</b><span>Periksa dan terima undangan melalui menu Pengaturan.</span></div><button onClick={() => setActiveView("settings")}>Lihat undangan ↗</button></div>}
 
           {activeView === "overview" && <>
             <div className="workspace-banner">
@@ -850,83 +854,111 @@ export default function Home() {
           </>}
  
           {activeView === "settings" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">PREFERENSI WORKSPACE</div><h1>Pengaturan <em>& Backup</em></h1><p>Kelola akses anggota dan simpan salinan data pekerjaanmu.</p></div></div>
+            <div className="page-heading compact-heading"><div><div className="eyebrow">PREFERENSI & AKSES WORKSPACE</div><h1>Pengaturan <em>Workspace</em></h1><p>Kelola backup, anggota, akses pengguna, dan hak kerja dari satu halaman.</p></div></div>
             <div className="settings-grid">
-              <section className="panel-card settings-card"><div className="settings-icon">⇩</div><div className="eyebrow">DATA & KEAMANAN</div><h3>Backup Workspace</h3><p>Unduh salinan tugas, catatan, dan agenda dalam format JSON agar bisa disimpan sebagai arsip.</p><button className="primary-button" onClick={downloadBackup}>Unduh Backup JSON ↗</button><small>File backup hanya berisi data workspace yang sedang aktif.</small></section>
+              <section className="panel-card settings-card"><div className="settings-icon">⇩</div><div className="eyebrow">DATA & KEAMANAN</div><h3>Backup Workspace</h3><p>Unduh salinan tugas, catatan, dan agenda dalam format JSON untuk disimpan sebagai arsip.</p><button className="primary-button" onClick={downloadBackup}>Unduh Backup JSON ↗</button><small>File backup hanya berisi data workspace yang sedang aktif.</small></section>
               <section className="panel-card settings-card"><div className="settings-icon">↥</div><div className="eyebrow">PEMULIHAN DATA</div><h3>Restore dari Backup</h3><p>Pulihkan data dari file backup HUB WORKSPACE. Data akan ditambahkan tanpa menghapus data yang sudah ada.</p><label className="restore-file-button">Pilih File Backup<input type="file" accept="application/json,.json" onChange={(e) => { const file = e.target.files?.[0]; if (file) void restoreBackup(file); e.currentTarget.value = ""; }} /></label><small>Format file .json · Maksimal 10 MB</small></section>
-              <section className="panel-card settings-card"><div className="settings-icon">♧</div><div className="eyebrow">KOLABORASI</div><h3>Team & Access</h3><p>Kelola anggota workspace, peran, dan undangan pengguna berdasarkan ID login.</p><button className="secondary-button" onClick={() => setActiveView("team")}>Kelola Anggota ↗</button></section>
-              {(isAppAdmin || isPlatformAdmin) && <section className="panel-card settings-card"><div className="settings-icon">♙</div><div className="eyebrow">ADMINISTRASI AKUN</div><h3>Manajemen Pengguna</h3><p>Buat akun ID dan password, atur role aplikasi, reset password, serta aktif/nonaktifkan akun.</p><button className="secondary-button" onClick={() => setActiveView("users")}>Kelola Akun ↗</button></section>}
-              <section className="panel-card settings-note"><b>Informasi penyimpanan</b><p>HUB WORKSPACE menggunakan Supabase Cloud untuk menyimpan data dan mengatur hak akses. Backup JSON adalah salinan tambahan yang dapat kamu simpan secara berkala.</p><span><i /> Koneksi database aktif</span></section>
             </div>
+
+            <div className="access-section-heading"><div><div className="eyebrow">TEAM ACCESS & USER MANAGEMENT</div><h2>Anggota & Manajemen Pengguna</h2><p>Daftarkan akun, tentukan workspace dan role aksesnya, serta kelola anggota yang sudah terdaftar.</p></div>{(isAppAdmin || isPlatformAdmin) && <button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceId, workspaceRole: "member" }); setShowAccountModal(true); }}>＋ Buat Akun + Atur Akses</button>}</div>
+
+            <div className="access-layout">
+              <section className="panel-card team-members">
+                <div className="section-head"><div><div className="eyebrow">WORKSPACE AKTIF</div><h3>Daftar Anggota</h3></div><span className="subtle-count">{members.length} anggota</span></div>
+                <div className="active-workspace-strip"><b>{activeWorkspace?.name ?? "Workspace"}</b><span>{activeWorkspace?.workspace_type === "team" ? "Team workspace" : "Personal workspace"}</span></div>
+                <div className="member-list">{members.map((member) => <div className="member-row" key={member.id}><div className="avatar">{initials(member.display_name)}</div><div className="member-name"><b>{member.display_name}{member.user_id === user.id ? " (Kamu)" : ""}</b><span>{member.user_id === activeWorkspace?.owner_id ? "Pemilik workspace" : member.role === "admin" ? "Pengelola workspace" : member.role === "viewer" ? "Akses baca saja" : "Anggota workspace"}</span></div>{canManage && member.role !== "owner" ? <select value={member.role} aria-label="Role anggota" onChange={async (e) => { const { error } = await supabase!.from("hw_workspace_members").update({ role: e.target.value }).eq("id", member.id); if (error) flash(messageFrom(error)); else setRefreshKey((value) => value + 1); }}><option value="admin">Admin</option><option value="member">Member</option><option value="viewer">Viewer</option></select> : <span className={member.role === "owner" ? "role-pill owner" : "role-pill"}>{member.role}</span>}</div>)}
+                  {members.length === 0 && <div className="empty-inline"><b>Belum ada anggota.</b><span>Akun yang didaftarkan dengan akses ke workspace ini akan muncul di sini.</span></div>}
+                </div>
+                <div className="workspace-invite-area">
+                  <div className="section-head"><div><div className="eyebrow">UNDANGAN WORKSPACE</div><h3>Undang pengguna yang sudah ada</h3></div></div>
+                  {canManage ? <form onSubmit={sendInvite} className="invite-form"><label>ID Pengguna<input value={inviteLoginId} onChange={(e) => setInviteLoginId(e.target.value)} placeholder="Contoh: 10001597" autoCapitalize="none" required /></label><label>Role akses<select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola workspace</option><option value="viewer">Viewer — lihat saja</option></select></label><button className="primary-button full-button" disabled={busy}>Buat Undangan ↗</button></form> : <div className="permission-note">Hanya pemilik dan Admin workspace yang dapat mengundang pengguna.</div>}
+                </div>
+              </section>
+
+              <section className="panel-card invite-panel">
+                <div className="section-head"><div><div className="eyebrow">AKSES & UNDANGAN</div><h3>Undangan menunggu</h3></div><span className="subtle-count">{invites.filter((item) => !item.accepted_at).length} pending</span></div>
+                {invites.filter((item) => !item.accepted_at).length === 0 ? <div className="empty-inline"><b>Tidak ada undangan tertunda.</b><span>Undangan yang kamu kirim atau terima akan tampil di sini.</span></div> :
+                  <div className="invite-list">{invites.filter((item) => !item.accepted_at).map((invite) => { const incoming = invite.login_id?.toLowerCase() === loginId.toLowerCase() || Boolean(invite.email && invite.email.toLowerCase() === (user.email ?? "").toLowerCase()); return <div className="invite-row" key={invite.id}><div className="invite-icon">{incoming ? "↙" : "↗"}</div><div className="member-name"><b>{invite.login_id ? `ID: ${invite.login_id.toUpperCase()}` : invite.email}</b><span>{incoming ? `Diterima · ${invite.role}` : `Dikirim · ${invite.role} · Workspace ${invite.workspace_id.slice(0, 8)}`}</span></div>{incoming ? <button className="secondary-button small-button" onClick={() => acceptInvite(invite)}>Terima undangan</button> : <span className="role-pill">Menunggu</span>}</div>;})}</div>}
+              </section>
+            </div>
+
+            {(isAppAdmin || isPlatformAdmin) && <>
+              <div className="access-section-heading account-heading"><div><div className="eyebrow">ADMINISTRASI AKUN</div><h2>Manajemen Pengguna</h2><p>Buat ID dan password, tentukan akses workspace saat pendaftaran, reset password, dan atur status akun.</p></div><span className="subtle-count">{accounts.length} akun terdaftar</span></div>
+              <div className="stats-grid account-stats">
+                <StatCard label="Total akun" value={accounts.length} detail="Akun terdaftar" icon="♙" />
+                <StatCard label="Akun aktif" value={accounts.filter((account) => account.is_active).length} detail="Dapat login" icon="✓" accent="green" />
+                <StatCard label="Administrator" value={accounts.filter((account) => account.account_role === "admin" || account.is_super_admin).length} detail="Pengelola aplikasi" icon="⚙" accent="orange" />
+                <StatCard label="Nonaktif" value={accounts.filter((account) => !account.is_active).length} detail="Akses login diblokir" icon="!" accent="red" />
+              </div>
+              <section className="panel-card table-card account-table-card">
+                <div className="section-head account-table-head"><div><div className="eyebrow">USER DIRECTORY</div><h3>Daftar akun pengguna</h3></div><span className="subtle-count">{accounts.length} akun</span></div>
+                {accounts.length === 0 ? <EmptyState title="Belum ada akun tambahan." detail="Buat akun dan tentukan workspace yang dapat diakses pada form pendaftaran." action="＋ Buat akun" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user", workspaceId, workspaceRole: "member" }); setShowAccountModal(true); }} /> :
+                  <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>Role Aplikasi</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
+                    {accounts.map((account) => <tr key={account.user_id}>
+                      <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Admin aplikasi" : "User"}</span></div></div></td>
+                      <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
+                      <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : isPlatformAdmin ? <select className="status-select" value={account.account_role} onChange={(e) => updateAccountRole(account, e.target.value)}><option value="user">User</option><option value="admin">Admin</option></select> : <span className="role-pill">{account.account_role}</span>}</td>
+                      <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
+                      <td className="date-cell">{dateLabel(account.created_at.slice(0, 10))}</td>
+                      <td><div className="account-actions">{!account.is_super_admin && <><button className="icon-button" title="Ubah nama" onClick={() => renameAccount(account)}>✎</button><button className="icon-button" title="Reset password" onClick={() => resetAccountPassword(account)}>↻</button><button className={account.is_active ? "icon-button danger-hover" : "icon-button"} title={account.is_active ? "Nonaktifkan akun" : "Aktifkan akun"} onClick={() => changeAccountStatus(account)}>{account.is_active ? "⊘" : "✓"}</button></>}</div></td>
+                    </tr>)}
+                  </tbody></table></div>}
+              </section>
+              <p className="account-access-note">Akun Admin aplikasi hanya dapat dibuat dan diubah oleh Super Admin. Role workspace (Admin, Member, Viewer) ditentukan tersendiri saat pendaftaran.</p>
+            </>}
+            <section className="panel-card settings-note"><b>Informasi penyimpanan</b><p>HUB WORKSPACE menggunakan Supabase Cloud untuk menyimpan data dan mengatur hak akses. Backup JSON adalah salinan tambahan yang dapat kamu simpan berkala.</p><span><i /> Koneksi database aktif</span></section>
           </>}
  
-          {activeView === "team" && <>
-            <div className="page-heading compact-heading"><div><div className="eyebrow">WORK BETTER TOGETHER</div><h1>Team & <em>access.</em></h1><p>Manage people and invitations for this workspace.</p></div><span className="workspace-type-badge">{activeWorkspace?.workspace_type === "team" ? "⌘ Team workspace" : "◒ Personal workspace"}</span></div>
-            <div className="team-grid">
-              <section className="panel-card team-members"><div className="section-head"><div><div className="eyebrow">PEOPLE</div><h3>Workspace members</h3></div><span className="subtle-count">{members.length} members</span></div>
-                <div className="member-list">{members.map((member) => <div className="member-row" key={member.id}><div className="avatar">{initials(member.display_name)}</div><div className="member-name"><b>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</b><span>{member.user_id === activeWorkspace?.owner_id ? "Workspace owner" : "Workspace member"}</span></div>{canManage && member.role !== "owner" ? <select value={member.role} aria-label="Member role" onChange={async (e) => { const { error } = await supabase!.from("hw_workspace_members").update({ role: e.target.value }).eq("id", member.id); if (error) flash(messageFrom(error)); else setRefreshKey((value) => value + 1); }}><option value="admin">Admin</option><option value="member">Member</option><option value="viewer">Viewer</option></select> : <span className={member.role === "owner" ? "role-pill owner" : "role-pill"}>{member.role}</span>}</div>)}</div>
-              </section>
-              <section className="panel-card invite-panel"><div className="eyebrow">BRING PEOPLE IN</div><h3>Invite a teammate.</h3><p>Tambahkan anggota workspace menggunakan ID pengguna yang sudah dibuat Admin.</p>
-                {canManage ? <form onSubmit={sendInvite} className="invite-form"><label>ID Pengguna<input value={inviteLoginId} onChange={(e) => setInviteLoginId(e.target.value)} placeholder="Contoh: satya01" autoCapitalize="none" required /></label><label>Workspace role<select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="member">Member — can work on tasks</option><option value="admin">Admin — can manage people</option><option value="viewer">Viewer — read only</option></select></label><button className="primary-button full-button" disabled={busy}>Create invitation ↗</button></form> : <div className="permission-note">Only workspace owners and admins can invite people.</div>}
-              </section>
-            </div>
-            <section className="panel-card invitations-panel"><div className="section-head"><div><div className="eyebrow">INVITATIONS</div><h3>Pending and received</h3></div><span className="subtle-count">{invites.filter((item) => !item.accepted_at).length} pending</span></div>
-              {invites.filter((item) => !item.accepted_at).length === 0 ? <div className="empty-inline"><b>No pending invitations.</b><span>Invitations you send or receive will show up here.</span></div> :
-                <div className="invite-list">{invites.filter((item) => !item.accepted_at).map((invite) => { const incoming = invite.login_id?.toLowerCase() === loginId.toLowerCase() || Boolean(invite.email && invite.email.toLowerCase() === (user.email ?? "").toLowerCase()); return <div className="invite-row" key={invite.id}><div className="invite-icon">{incoming ? "↙" : "↗"}</div><div className="member-name"><b>{invite.login_id ? `ID: ${invite.login_id.toUpperCase()}` : invite.email}</b><span>{incoming ? `Received · ${invite.role}` : `Sent · ${invite.role} · Workspace ${invite.workspace_id.slice(0, 8)}`}</span></div>{incoming ? <button className="secondary-button small-button" onClick={() => acceptInvite(invite)}>Accept invitation</button> : <span className="role-pill">Awaiting response</span>}</div>;})}</div>}
-            </section>
-          </>}
-
-          {(activeView === "users" && (isAppAdmin || isPlatformAdmin)) && <>
-            <div className="page-heading compact-heading">
-              <div><div className="eyebrow">ACCOUNT ADMINISTRATION</div><h1>User <em>management.</em></h1><p>Buat ID pengguna, atur peran, nonaktifkan akun, dan reset password.</p></div>
-              <button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user" }); setShowAccountModal(true); }}>＋ Buat akun</button>
-            </div>
-            <div className="stats-grid account-stats">
-              <StatCard label="Total accounts" value={accounts.length} detail="Akun terdaftar" icon="♙" />
-              <StatCard label="Active accounts" value={accounts.filter((account) => account.is_active).length} detail="Dapat login ke aplikasi" icon="✓" accent="green" />
-              <StatCard label="Administrators" value={accounts.filter((account) => account.account_role === "admin" || account.is_super_admin).length} detail="Pengelola aplikasi" icon="⚙" accent="orange" />
-              <StatCard label="Inactive" value={accounts.filter((account) => !account.is_active).length} detail="Akses login diblokir" icon="!" accent="red" />
-            </div>
-            <section className="panel-card table-card account-table-card">
-              <div className="section-head account-table-head"><div><div className="eyebrow">USER DIRECTORY</div><h3>Daftar akun pengguna</h3></div><span className="subtle-count">{accounts.length} akun</span></div>
-              {accounts.length === 0 ? <EmptyState title="Belum ada akun." detail="Buat akun pertama untuk mulai mengelola pengguna." action="＋ Buat akun" onClick={() => setShowAccountModal(true)} /> :
-                <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>Role</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
-                  {accounts.map((account) => <tr key={account.user_id}>
-                    <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Application Admin" : "User"}</span></div></div></td>
-                    <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
-                    <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : isPlatformAdmin ? <select className="status-select" value={account.account_role} onChange={(e) => updateAccountRole(account, e.target.value)}><option value="user">User</option><option value="admin">Admin</option></select> : <span className="role-pill">{account.account_role}</span>}</td>
-                    <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
-                    <td className="date-cell">{dateLabel(account.created_at.slice(0, 10))}</td>
-                    <td><div className="account-actions">{!account.is_super_admin && <><button className="icon-button" title="Ubah nama" onClick={() => renameAccount(account)}>✎</button><button className="icon-button" title="Reset password" onClick={() => resetAccountPassword(account)}>↻</button><button className={account.is_active ? "icon-button danger-hover" : "icon-button"} title={account.is_active ? "Nonaktifkan akun" : "Aktifkan akun"} onClick={() => changeAccountStatus(account)}>{account.is_active ? "⊘" : "✓"}</button></>}</div></td>
-                  </tr>)}
-                </tbody></table></div>}
-            </section>
-            <p className="account-access-note">Akun Admin dapat membuat akun User. Hanya Super Admin yang dapat membuat Admin dan mengubah role administrator.</p>
-          </>}
-
           {busy && <div className="loading-strip"><i /> Syncing workspace data</div>}
         </div>
         <footer className="app-footer"><span>HUB WORKSPACE</span><span>Personal focus. Shared momentum.</span><span>v1.0</span></footer>
       </main>
 
-      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.id === "overview" ? "Home" : item.id === "tasks" ? "Tugas" : item.id === "calendar" ? "Kalender" : item.id === "board" ? "Kanban" : item.id === "notes" ? "Catatan" : "Pengaturan"}</small></button>)}</nav>
+      <nav className="mobile-nav">{navItems.map((item) => <button key={item.id} className={activeView === item.id || (item.id === "settings" && (activeView === "team" || activeView === "users")) ? "mobile-nav-item active" : "mobile-nav-item"} onClick={() => setActiveView(item.id)}><span>{item.icon}</span><small>{item.id === "overview" ? "Home" : item.id === "tasks" ? "Tugas" : item.id === "calendar" ? "Kalender" : item.id === "board" ? "Kanban" : item.id === "notes" ? "Catatan" : "Akses"}</small></button>)}</nav>
 
       {showTaskModal && <Modal title={editingTaskId ? "Edit task" : "Create a task"} subtitle="Keep the owner, timing, and next action clear." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}><form className="modal-form" onSubmit={createTask}><label>Task name<input autoFocus value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="What needs to get done?" required /></label><label>Description<textarea value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Add context or a clear next step…" rows={3} /></label><div className="form-two"><label>Person in charge<select value={taskForm.assigned_to} onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}><option value="">Unassigned</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</option>)}</select></label><label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label></div><div className="form-two"><label>Due date<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label><label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="cancelled">Cancelled</option></select></label></div><label>Progress <span className="form-hint">{taskForm.progress}% complete</span><input type="range" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Number(e.target.value) })} /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowTaskModal(false); setEditingTaskId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingTaskId ? "Save changes ↗" : "Create task ↗"}</button></div></form></Modal>}
 
-      {showNoteModal && <Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
+      {showTaskModal && <Modal className="task-modal" title={editingTaskId ? "Edit Task" : "Input Task"} subtitle="Lengkapi detail agar tugas mudah dipantau dan ditindaklanjuti." onClose={() => { setShowTaskModal(false); setEditingTaskId(null); }}>
+        <form className="task-entry-form" onSubmit={createTask}>
+          <div className="task-entry-grid">
+            <label>Tanggal Rencana<input type="date" value={taskForm.start_date} onChange={(e) => setTaskForm({ ...taskForm, start_date: e.target.value })} required /></label>
+            <label>Deadline<input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm({ ...taskForm, due_date: e.target.value })} /></label>
+            <label>Kategori<select value={taskForm.category} onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}>{taskCategoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}</select></label>
+            <label>Priority<select value={taskForm.priority} onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}><option value="low">Rendah</option><option value="medium">Medium</option><option value="high">Tinggi</option><option value="urgent">Urgent</option></select></label>
+            <label className="task-field-wide-three">Rencana / Kegiatan<textarea autoFocus rows={3} value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Contoh: Membuat laporan mingguan, follow up data supplier, menyiapkan materi meeting…" required /></label>
+            <label>Status<select value={taskForm.status} onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}><option value="todo">Belum Mulai</option><option value="in_progress">Sedang Berjalan</option><option value="waiting">Menunggu</option><option value="done">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
+            <label>Progress (%)<input type="number" min="0" max="100" step="5" value={taskForm.status === "done" ? 100 : taskForm.progress} onChange={(e) => setTaskForm({ ...taskForm, progress: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })} /></label>
+            <label>PIC / Owner<select value={taskForm.assigned_to} onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}><option value="">Optional</option>{members.map((member) => <option key={member.user_id} value={member.user_id}>{member.display_name}{member.user_id === user?.id ? " (Kamu)" : ""}</option>)}</select></label>
+            <label className="task-field-wide-two">Catatan / Next Action<textarea rows={3} value={taskForm.description} onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Optional. Contoh: menunggu data dari PIC terkait, follow up besok…" /></label>
+          </div>
+          <div className="task-entry-actions"><button className="primary-button" disabled={busy}>{busy ? "Menyimpan…" : editingTaskId ? "Simpan Perubahan" : "Simpan Task"}</button><button type="button" className="secondary-button" onClick={() => setTaskForm(defaultTaskForm())}>Kosongkan Form</button></div>
+        </form>
+      </Modal>}
+
+      {showNoteModal &&<Modal title={editingNoteId ? "Edit note" : "Write a note"} subtitle="A place for the details worth keeping." onClose={() => { setShowNoteModal(false); setEditingNoteId(null); }}><form className="modal-form" onSubmit={createNote}><label>Title<input autoFocus value={noteForm.title} onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })} placeholder="A thought to keep…" /></label><label>Your note<textarea rows={7} value={noteForm.content} onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })} placeholder="Write freely…" /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => { setShowNoteModal(false); setEditingNoteId(null); }}>Cancel</button><button className="primary-button" disabled={busy}>{editingNoteId ? "Save changes ↗" : "Save note ↗"}</button></div></form></Modal>}
 
       {showEventModal && <Modal title="Add an event" subtitle="Put an important moment on the shared calendar." onClose={() => setShowEventModal(false)}><form className="modal-form" onSubmit={createEvent}><label>Event title<input autoFocus value={eventForm.title} onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Team sync, project deadline…" required /></label><label>Description<textarea rows={2} value={eventForm.description} onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })} placeholder="What should everyone know?" /></label><label>Location<input value={eventForm.location} onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })} placeholder="Meeting room or online link" /></label><div className="form-two"><label>Starts at<input type="datetime-local" value={eventForm.starts_at} onChange={(e) => setEventForm({ ...eventForm, starts_at: e.target.value })} required /></label><label>Ends at<input type="datetime-local" value={eventForm.ends_at} onChange={(e) => setEventForm({ ...eventForm, ends_at: e.target.value })} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowEventModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Add event ↗</button></div></form></Modal>}
 
       {showWorkspaceModal && <Modal title="Create a workspace" subtitle="Keep personal focus separate from shared team work." onClose={() => setShowWorkspaceModal(false)}><form className="modal-form" onSubmit={createWorkspace}><label>Workspace name<input autoFocus value={workspaceForm.name} onChange={(e) => setWorkspaceForm({ ...workspaceForm, name: e.target.value })} placeholder="e.g. Operations team" required /></label><label>Workspace type<select value={workspaceForm.workspace_type} onChange={(e) => setWorkspaceForm({ ...workspaceForm, workspace_type: e.target.value as "personal" | "team" })}><option value="personal">Personal — just for me</option><option value="team">Team — collaborate with others</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowWorkspaceModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Create workspace ↗</button></div></form></Modal>}
 
-      {showAccountModal && <Modal title="Buat akun pengguna" subtitle="Akun akan dibuat oleh Admin. Pengguna masuk menggunakan ID dan password." onClose={() => setShowAccountModal(false)}><form className="modal-form" onSubmit={createAccount}>
-        <label>ID Pengguna<input autoFocus value={accountForm.loginId} onChange={(e) => setAccountForm({ ...accountForm, loginId: e.target.value.toLowerCase().replace(/\\s+/g, "") })} placeholder="Contoh: imam01" autoCapitalize="none" required /></label>
-        <label>Nama lengkap<input value={accountForm.fullName} onChange={(e) => setAccountForm({ ...accountForm, fullName: e.target.value })} placeholder="Nama pengguna" required /></label>
-        <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
-        {isPlatformAdmin && <label>Role aplikasi<select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}><option value="user">User</option><option value="admin">Admin</option></select></label>}
-        <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy}>Simpan akun ↗</button></div>
-      </form></Modal>}
-      {toast && <div className="toast">{toast}</div>}
+      {showAccountModal && <Modal title="Buat Akun & Atur Akses" subtitle="Akun langsung ditambahkan ke workspace yang dipilih setelah disimpan." onClose={() => setShowAccountModal(false)}>
+        <form className="modal-form account-entry-form" onSubmit={createAccount}>
+          <div className="form-two">
+            <label>ID Pengguna<input autoFocus value={accountForm.loginId} onChange={(e) => setAccountForm({ ...accountForm, loginId: e.target.value.toLowerCase().replace(/\\s+/g, "") })} placeholder="Contoh: 10001597" autoCapitalize="none" required /></label>
+            <label>Nama lengkap<input value={accountForm.fullName} onChange={(e) => setAccountForm({ ...accountForm, fullName: e.target.value })} placeholder="Nama pengguna" required /></label>
+          </div>
+          <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
+          <div className="form-two">
+            <label>Workspace yang diberikan<select value={accountForm.workspaceId} onChange={(e) => setAccountForm({ ...accountForm, workspaceId: e.target.value })} required><option value="">Pilih workspace</option>{workspaces.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}</select></label>
+            <label>Role akses workspace<select value={accountForm.workspaceRole} onChange={(e) => setAccountForm({ ...accountForm, workspaceRole: e.target.value })}><option value="member">Member — mengerjakan tugas</option><option value="admin">Admin — mengelola anggota & tugas</option><option value="viewer">Viewer — lihat saja</option></select></label>
+          </div>
+          {isPlatformAdmin && <label>Role aplikasi<select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}><option value="user">User</option><option value="admin">Admin aplikasi</option></select></label>}
+          <div className="account-access-preview"><b>Akses setelah dibuat</b><span>{workspaces.find((space) => space.id === accountForm.workspaceId)?.name || "Belum memilih workspace"} · {accountForm.workspaceRole}</span><small>Pengguna dapat langsung melihat workspace ini setelah login menggunakan ID dan password.</small></div>
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy || !workspaces.length || !accountForm.workspaceId}>Simpan Akun & Akses ↗</button></div>
+        </form>
+      </Modal>}
+
+            {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
@@ -943,6 +975,6 @@ function EmptyInline({ title, detail, action, onClick }: { title: string; detail
 function EmptyState({ title, detail, action, onClick }: { title: string; detail: string; action: string; onClick: () => void }) {
   return <div className="empty-state"><div className="empty-illustration">✳</div><h3>{title}</h3><p>{detail}</p><button className="secondary-button" onClick={onClick}>{action}</button></div>;
 }
-function Modal({ title, subtitle, children, onClose }: { title: string; subtitle: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><section className="modal-card" role="dialog" aria-modal="true" aria-label={title}><div className="modal-head"><div><div className="eyebrow">HUB WORKSPACE</div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-button close-button" onClick={onClose}>×</button></div>{children}</section></div>;
+function Modal({ title, subtitle, children, onClose, className = "" }: { title: string; subtitle: string; children: React.ReactNode; onClose: () => void; className?: string }) {
+  return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><section className={`modal-card ${className}`} role="dialog" aria-modal="true" aria-label={title}><div className="modal-head"><div><div className="eyebrow">HUB WORKSPACE</div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-button close-button" onClick={onClose}>×</button></div>{children}</section></div>;
 }
