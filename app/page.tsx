@@ -1231,7 +1231,7 @@ export default function Home() {
                 <label>Nama pengguna<input value={profileNameDraft} onChange={(e) => setProfileNameDraft(e.target.value)} minLength={2} maxLength={100} required /></label>
                 <label>HUB Saya<select value={myHubCodeDraft} onChange={(e) => setMyHubCodeDraft(e.target.value)} required><option value="">Pilih HUB</option>{hubs.map((hub) => <option key={hub.hub_code} value={hub.hub_code}>{hub.hub_code} — {hub.hub_name}</option>)}</select></label>
                 <label>ID Login<input value={loginId.toUpperCase()} readOnly /></label>
-                <button className="primary-button" disabled={savingProfileName || profileNameDraft.trim() === profileName}>{savingProfileName ? "Menyimpan…" : "Simpan Nama"}</button>
+                <button className="primary-button" disabled={savingProfileName || (profileNameDraft.trim() === profileName && myHubCodeDraft === myHubCode)}>{savingProfileName ? "Menyimpan…" : "Simpan Profil"}</button>
               </form>
             </section>
             {(isAppAdmin || isPlatformAdmin) && <>
@@ -1277,6 +1277,16 @@ export default function Home() {
                   <div><button className="primary-button">{editingDivisionId ? "Simpan Perubahan" : "＋ Tambah Divisi"}</button>{editingDivisionId && <button type="button" className="secondary-button" onClick={() => { setEditingDivisionId(null); setDivisionForm({ name: "", color: "#4386AE" }); }}>Batal</button>}</div>
                 </form>
                 <div className="master-data-list">{divisions.map((division) => <div className="master-data-row" key={division.id}><span className="master-color-dot" style={{ background: division.color }} /><b>{division.name}</b><small>{tasks.filter((task) => (task.division_ids ?? []).includes(division.id)).length} task</small><button className="icon-button" title="Edit divisi" onClick={() => { setEditingDivisionId(division.id); setDivisionForm({ name: division.name, color: division.color }); }}>✎</button><button className="icon-button danger-hover" title="Hapus divisi" onClick={() => removeDivision(division)}>×</button></div>)}</div>
+              </section>
+              <section className="panel-card master-data-card hub-master-card">
+                <div className="section-head"><div><div className="eyebrow">MASTER DATA</div><h3>HUB Operasional</h3><p>Master HUB untuk akun pengguna dan sasaran notifikasi tugas.</p></div><span className="subtle-count">{hubs.length} HUB</span></div>
+                <form className="master-data-form master-hub-form" onSubmit={saveHub}>
+                  <label>Kode HUB<input value={hubForm.hub_code} onChange={(e) => setHubForm({ ...hubForm, hub_code: e.target.value.toUpperCase().replace(/\s+/g, "") })} placeholder="Contoh: MKS" maxLength={12} readOnly={Boolean(editingHubCode)} required /></label>
+                  <label>Nama HUB<input value={hubForm.hub_name} onChange={(e) => setHubForm({ ...hubForm, hub_name: e.target.value })} placeholder="Contoh: HUB Makassar" required /></label>
+                  <label>Warna<input type="color" value={hubForm.color} onChange={(e) => setHubForm({ ...hubForm, color: e.target.value })} /></label>
+                  <div><button className="primary-button">{editingHubCode ? "Simpan Perubahan" : "＋ Tambah HUB"}</button>{editingHubCode && <button type="button" className="secondary-button" onClick={() => { setEditingHubCode(null); setHubForm({ hub_code: "", hub_name: "", color: "#24785F" }); }}>Batal</button>}</div>
+                </form>
+                <div className="master-data-list">{hubs.map((hub) => <div className="master-data-row hub-master-row" key={hub.hub_code}><span className="master-color-dot" style={{ background: hub.color }} /><b>{hub.hub_code} · {hub.hub_name}</b><small>{accounts.filter((account) => account.hub_code === hub.hub_code).length} akun · {tasks.filter((task) => (task.hub_codes ?? []).includes(hub.hub_code)).length} tugas</small><button className="icon-button" title="Edit nama HUB" onClick={() => { setEditingHubCode(hub.hub_code); setHubForm({ hub_code: hub.hub_code, hub_name: hub.hub_name, color: hub.color }); }}>✎</button><button className="icon-button danger-hover" title="Hapus HUB" onClick={() => removeHub(hub)}>×</button></div>)}</div>
               </section>
             </div>}
             <div className="settings-grid settings-bottom-grid">
