@@ -233,6 +233,29 @@ export default function Home() {
     return () => { mounted = false; };
   }, [supabase, user, workspaceId, refreshKey, flash, activeWorkspace?.owner_id]);
 
+  useEffect(() => {
+    if (!supabase || !user || !(isAppAdmin || isPlatformAdmin)) {
+      setAccounts([]);
+      return;
+    }
+    let mounted = true;
+    const loadAccounts = async () => {
+      const [{ data: accountRows, error }, { data: superRows }] = await Promise.all([
+        supabase.from("hw_user_accounts").select("user_id,login_id,display_name,account_role,is_active,created_at").order("created_at", { ascending: false }),
+        supabase.from("hw_platform_admins").select("user_id"),
+      ]);
+      if (!mounted) return;
+      if (error) {
+        flash(messageFrom(error));
+        return;
+      }
+      const superIds = new Set((superRows ?? []).map((row: { user_id: string }) => row.user_id));
+      setAccounts(((accountRows ?? []) as UserAccount[]).map((row) => ({ ...row, is_super_admin: superIds.has(row.user_id) })));
+    };
+    void loadAccounts();
+    return () => { mounted = false; };
+  }, [supabase, user, isAppAdmin, isPlatformAdmin, refreshKey, flash]);
+
   const doAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase) return;
@@ -418,6 +441,77 @@ export default function Home() {
     }
   };
 
+  const invokeAccountAdmin = async (payload: Record<string, unknown>) => {
+    if (!supabase) throw new Error("Supabase belum terhubung.");
+    const { data, error } = await supabase.functions.invoke("hw-admin-users", { body: payload });
+    if (error) throw new Error(data?.error || error.message || "Permintaan pengelolaan akun gagal.");
+    if (data?.error) throw new Error(data.error);
+    return data;
+  };
+
+  const createAccount = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const payload = {
+        action: "create",
+        loginId: accountForm.loginId.trim().toLowerCase().replace(/\\s+/g, ""),
+        fullName: accountForm.fullName.trim(),
+        password: accountForm.password,
+        role: isPlatformAdmin ? accountForm.role : "user",
+      };
+      await invokeAccountAdmin(payload);
+      setShowAccountModal(false);
+      setAccountForm({ loginId: "", fullName: "", password: "", role: "user" });
+      setRefreshKey((value) => value + 1);
+      flash("Akun baru berhasil dibuat.");
+    } catch (error) { flash(messageFrom(error)); }
+    finally { setBusy(false); }
+  };
+
+  const changeAccountStatus = async (account: UserAccount) => {
+    if (account.is_super_admin) return;
+    try {
+      await invokeAccountAdmin({ action: "set-active", userId: account.user_id, active: !account.is_active });
+      setRefreshKey((value) => value + 1);
+      flash(account.is_active ? "Akun dinonaktifkan." : "Akun diaktifkan kembali.");
+    } catch (error) { flash(messageFrom(error)); }
+  };
+
+  const resetAccountPassword = async (account: UserAccount) => {
+    if (account.is_super_admin) return;
+    const password = window.prompt("Masukkan password sementara baru (minimal 8 karakter):");
+    if (password === null) return;
+    if (password.length < 8 || password.length > 128) {
+      flash("Password harus 8–128 karakter.");
+      return;
+    }
+    try {
+      await invokeAccountAdmin({ action: "reset-password", userId: account.user_id, password });
+      flash("Password akun berhasil direset.");
+    } catch (error) { flash(messageFrom(error)); }
+  };
+
+  const renameAccount = async (account: UserAccount) => {
+    if (account.is_super_admin) return;
+    const fullName = window.prompt("Nama pengguna:", account.display_name);
+    if (fullName === null || fullName.trim() === account.display_name) return;
+    try {
+      await invokeAccountAdmin({ action: "update-profile", userId: account.user_id, fullName: fullName.trim() });
+      setRefreshKey((value) => value + 1);
+      flash("Nama pengguna berhasil diperbarui.");
+    } catch (error) { flash(messageFrom(error)); }
+  };
+
+  const updateAccountRole = async (account: UserAccount, role: string) => {
+    if (!isPlatformAdmin || account.is_super_admin) return;
+    try {
+      await invokeAccountAdmin({ action: "set-role", userId: account.user_id, role });
+      setRefreshKey((value) => value + 1);
+      flash("Role akun diperbarui.");
+    } catch (error) { flash(messageFrom(error)); }
+  };
+
   const visibleTasks = useMemo(() => tasks.filter((task) => {
     const query = taskQuery.toLowerCase();
     const matchesQuery = !query || task.title.toLowerCase().includes(query) || task.description?.toLowerCase().includes(query);
@@ -429,6 +523,10 @@ export default function Home() {
     if (!supabase) return;
     await supabase.auth.signOut();
     setActiveView("overview");
+    setLoginId("");
+    setIsAppAdmin(false);
+    setIsPlatformAdmin(false);
+    setAccounts([]);
   };
 
   if (!ready) return <div className="boot-screen"><div className="brand-mark">H</div><span>Preparing your workspace…</span></div>;
@@ -617,14 +715,42 @@ export default function Home() {
               <section className="panel-card team-members"><div className="section-head"><div><div className="eyebrow">PEOPLE</div><h3>Workspace members</h3></div><span className="subtle-count">{members.length} members</span></div>
                 <div className="member-list">{members.map((member) => <div className="member-row" key={member.id}><div className="avatar">{initials(member.display_name)}</div><div className="member-name"><b>{member.display_name}{member.user_id === user.id ? " (You)" : ""}</b><span>{member.user_id === activeWorkspace?.owner_id ? "Workspace owner" : "Workspace member"}</span></div>{canManage && member.role !== "owner" ? <select value={member.role} aria-label="Member role" onChange={async (e) => { const { error } = await supabase!.from("hw_workspace_members").update({ role: e.target.value }).eq("id", member.id); if (error) flash(messageFrom(error)); else setRefreshKey((value) => value + 1); }}><option value="admin">Admin</option><option value="member">Member</option><option value="viewer">Viewer</option></select> : <span className={member.role === "owner" ? "role-pill owner" : "role-pill"}>{member.role}</span>}</div>)}</div>
               </section>
-              <section className="panel-card invite-panel"><div className="eyebrow">BRING PEOPLE IN</div><h3>Invite a teammate.</h3><p>Send an invitation to someone with a HUB WORKSPACE account using their sign-in email.</p>
-                {canManage ? <form onSubmit={sendInvite} className="invite-form"><label>Email address<input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="teammate@company.com" required /></label><label>Workspace role<select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="member">Member — can work on tasks</option><option value="admin">Admin — can manage people</option><option value="viewer">Viewer — read only</option></select></label><button className="primary-button full-button" disabled={busy}>Create invitation ↗</button></form> : <div className="permission-note">Only workspace owners and admins can invite people.</div>}
+              <section className="panel-card invite-panel"><div className="eyebrow">BRING PEOPLE IN</div><h3>Invite a teammate.</h3><p>Tambahkan anggota workspace menggunakan ID pengguna yang sudah dibuat Admin.</p>
+                {canManage ? <form onSubmit={sendInvite} className="invite-form"><label>ID Pengguna<input value={inviteLoginId} onChange={(e) => setInviteLoginId(e.target.value)} placeholder="Contoh: satya01" autoCapitalize="none" required /></label><label>Workspace role<select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}><option value="member">Member — can work on tasks</option><option value="admin">Admin — can manage people</option><option value="viewer">Viewer — read only</option></select></label><button className="primary-button full-button" disabled={busy}>Create invitation ↗</button></form> : <div className="permission-note">Only workspace owners and admins can invite people.</div>}
               </section>
             </div>
             <section className="panel-card invitations-panel"><div className="section-head"><div><div className="eyebrow">INVITATIONS</div><h3>Pending and received</h3></div><span className="subtle-count">{invites.filter((item) => !item.accepted_at).length} pending</span></div>
               {invites.filter((item) => !item.accepted_at).length === 0 ? <div className="empty-inline"><b>No pending invitations.</b><span>Invitations you send or receive will show up here.</span></div> :
-                <div className="invite-list">{invites.filter((item) => !item.accepted_at).map((invite) => { const incoming = invite.email.toLowerCase() === (user.email ?? "").toLowerCase(); return <div className="invite-row" key={invite.id}><div className="invite-icon">{incoming ? "↙" : "↗"}</div><div className="member-name"><b>{invite.email}</b><span>{incoming ? `Received · ${invite.role}` : `Sent · ${invite.role} · Workspace ${invite.workspace_id.slice(0, 8)}`}</span></div>{incoming ? <button className="secondary-button small-button" onClick={() => acceptInvite(invite)}>Accept invitation</button> : <span className="role-pill">Awaiting response</span>}</div>;})}</div>}
+                <div className="invite-list">{invites.filter((item) => !item.accepted_at).map((invite) => { const incoming = invite.login_id?.toLowerCase() === loginId.toLowerCase() || Boolean(invite.email && invite.email.toLowerCase() === (user.email ?? "").toLowerCase()); return <div className="invite-row" key={invite.id}><div className="invite-icon">{incoming ? "↙" : "↗"}</div><div className="member-name"><b>{invite.login_id ? `ID: ${invite.login_id.toUpperCase()}` : invite.email}</b><span>{incoming ? `Received · ${invite.role}` : `Sent · ${invite.role} · Workspace ${invite.workspace_id.slice(0, 8)}`}</span></div>{incoming ? <button className="secondary-button small-button" onClick={() => acceptInvite(invite)}>Accept invitation</button> : <span className="role-pill">Awaiting response</span>}</div>;})}</div>}
             </section>
+          </>}
+
+          {(activeView === "users" && (isAppAdmin || isPlatformAdmin)) && <>
+            <div className="page-heading compact-heading">
+              <div><div className="eyebrow">ACCOUNT ADMINISTRATION</div><h1>User <em>management.</em></h1><p>Buat ID pengguna, atur peran, nonaktifkan akun, dan reset password.</p></div>
+              <button className="primary-button" onClick={() => { setAccountForm({ loginId: "", fullName: "", password: "", role: "user" }); setShowAccountModal(true); }}>＋ Buat akun</button>
+            </div>
+            <div className="stats-grid account-stats">
+              <StatCard label="Total accounts" value={accounts.length} detail="Akun terdaftar" icon="♙" />
+              <StatCard label="Active accounts" value={accounts.filter((account) => account.is_active).length} detail="Dapat login ke aplikasi" icon="✓" accent="green" />
+              <StatCard label="Administrators" value={accounts.filter((account) => account.account_role === "admin" || account.is_super_admin).length} detail="Pengelola aplikasi" icon="⚙" accent="orange" />
+              <StatCard label="Inactive" value={accounts.filter((account) => !account.is_active).length} detail="Akses login diblokir" icon="!" accent="red" />
+            </div>
+            <section className="panel-card table-card account-table-card">
+              <div className="section-head account-table-head"><div><div className="eyebrow">USER DIRECTORY</div><h3>Daftar akun pengguna</h3></div><span className="subtle-count">{accounts.length} akun</span></div>
+              {accounts.length === 0 ? <EmptyState title="Belum ada akun." detail="Buat akun pertama untuk mulai mengelola pengguna." action="＋ Buat akun" onClick={() => setShowAccountModal(true)} /> :
+                <div className="task-table-wrap"><table className="task-table account-table"><thead><tr><th>Pengguna</th><th>ID Login</th><th>Role</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead><tbody>
+                  {accounts.map((account) => <tr key={account.user_id}>
+                    <td><div className="account-person"><div className="avatar">{initials(account.display_name)}</div><div className="table-task-title"><b>{account.display_name}</b><span>{account.is_super_admin ? "Super Admin" : account.account_role === "admin" ? "Application Admin" : "User"}</span></div></div></td>
+                    <td><code className="login-id-code">{account.login_id.toUpperCase()}</code></td>
+                    <td>{account.is_super_admin ? <span className="role-pill owner">Super Admin</span> : isPlatformAdmin ? <select className="status-select" value={account.account_role} onChange={(e) => updateAccountRole(account, e.target.value)}><option value="user">User</option><option value="admin">Admin</option></select> : <span className="role-pill">{account.account_role}</span>}</td>
+                    <td><span className={account.is_active ? "status-label active" : "status-label inactive"}><i />{account.is_active ? "Aktif" : "Nonaktif"}</span></td>
+                    <td className="date-cell">{dateLabel(account.created_at.slice(0, 10))}</td>
+                    <td><div className="account-actions">{!account.is_super_admin && <><button className="icon-button" title="Ubah nama" onClick={() => renameAccount(account)}>✎</button><button className="icon-button" title="Reset password" onClick={() => resetAccountPassword(account)}>↻</button><button className={account.is_active ? "icon-button danger-hover" : "icon-button"} title={account.is_active ? "Nonaktifkan akun" : "Aktifkan akun"} onClick={() => changeAccountStatus(account)}>{account.is_active ? "⊘" : "✓"}</button></>}</div></td>
+                  </tr>)}
+                </tbody></table></div>}
+            </section>
+            <p className="account-access-note">Akun Admin dapat membuat akun User. Hanya Super Admin yang dapat membuat Admin dan mengubah role administrator.</p>
           </>}
 
           {busy && <div className="loading-strip"><i /> Syncing workspace data</div>}
@@ -642,6 +768,13 @@ export default function Home() {
 
       {showWorkspaceModal && <Modal title="Create a workspace" subtitle="Keep personal focus separate from shared team work." onClose={() => setShowWorkspaceModal(false)}><form className="modal-form" onSubmit={createWorkspace}><label>Workspace name<input autoFocus value={workspaceForm.name} onChange={(e) => setWorkspaceForm({ ...workspaceForm, name: e.target.value })} placeholder="e.g. Operations team" required /></label><label>Workspace type<select value={workspaceForm.workspace_type} onChange={(e) => setWorkspaceForm({ ...workspaceForm, workspace_type: e.target.value as "personal" | "team" })}><option value="personal">Personal — just for me</option><option value="team">Team — collaborate with others</option></select></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowWorkspaceModal(false)}>Cancel</button><button className="primary-button" disabled={busy}>Create workspace ↗</button></div></form></Modal>}
 
+      {showAccountModal && <Modal title="Buat akun pengguna" subtitle="Akun akan dibuat oleh Admin. Pengguna masuk menggunakan ID dan password." onClose={() => setShowAccountModal(false)}><form className="modal-form" onSubmit={createAccount}>
+        <label>ID Pengguna<input autoFocus value={accountForm.loginId} onChange={(e) => setAccountForm({ ...accountForm, loginId: e.target.value.toLowerCase().replace(/\\s+/g, "") })} placeholder="Contoh: imam01" autoCapitalize="none" required /></label>
+        <label>Nama lengkap<input value={accountForm.fullName} onChange={(e) => setAccountForm({ ...accountForm, fullName: e.target.value })} placeholder="Nama pengguna" required /></label>
+        <label>Password awal<input type="password" value={accountForm.password} onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })} placeholder="Minimal 8 karakter" minLength={8} required /></label>
+        {isPlatformAdmin && <label>Role aplikasi<select value={accountForm.role} onChange={(e) => setAccountForm({ ...accountForm, role: e.target.value })}><option value="user">User</option><option value="admin">Admin</option></select></label>}
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowAccountModal(false)}>Batal</button><button className="primary-button" disabled={busy}>Simpan akun ↗</button></div>
+      </form></Modal>}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
